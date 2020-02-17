@@ -28,6 +28,7 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 
+#include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
@@ -83,6 +84,7 @@ void zlibc_free(void *ptr) {
     atomicDecr(used_memory,__n); \
 } while(0)
 
+static size_t pmem_threshold = UINT_MAX;
 static size_t used_memory = 0;
 pthread_mutex_t used_memory_mutex = PTHREAD_MUTEX_INITIALIZER;
 
@@ -225,6 +227,9 @@ size_t zmalloc_used_memory(void) {
 
 void zmalloc_set_oom_handler(void (*oom_handler)(size_t)) {
     zmalloc_oom_handler = oom_handler;
+}
+void zmalloc_set_threshold(size_t threshold) {
+    pmem_threshold = threshold;
 }
 
 /* Get the RSS information in an OS-specific way.
