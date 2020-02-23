@@ -60,7 +60,6 @@ start_server {tags {"defrag"}} {
 
             r config set latency-monitor-threshold 5
             r latency reset
-            r config set maxmemory 110mb ;# prevent further eviction (not to fail the digest test)
             set digest [r debug digest]
             catch {r config set activedefrag yes} e
             if {![string match {DISABLED*} $e]} {
@@ -101,7 +100,11 @@ start_server {tags {"defrag"}} {
                 assert {$frag < 1.1}
                 # due to high fragmentation, 100hz, and active-defrag-cycle-max set to 75,
                 # we expect max latency to be not much higher than 7.5ms but due to rare slowness threshold is set higher
+<<<<<<< HEAD
                 assert {$max_latency <= 30}
+=======
+                assert {$max_latency <= 60}
+>>>>>>> 62adabd0... Fix latency sensitivity of new defrag test
             } else {
                 set _ ""
             }
@@ -227,7 +230,11 @@ start_server {tags {"defrag"}} {
                 assert {$frag < 1.1}
                 # due to high fragmentation, 100hz, and active-defrag-cycle-max set to 75,
                 # we expect max latency to be not much higher than 7.5ms but due to rare slowness threshold is set higher
+<<<<<<< HEAD
                 assert {$max_latency <= 30}
+=======
+                assert {$max_latency <= 60}
+>>>>>>> 62adabd0... Fix latency sensitivity of new defrag test
             }
             # verify the data isn't corrupted or changed
             set newdigest [r debug digest]
@@ -317,8 +324,8 @@ start_server {tags {"defrag"}} {
                 }
                 assert {$frag < 1.1}
                 # due to high fragmentation, 100hz, and active-defrag-cycle-max set to 75,
-                # we expect max latency to be not much higher than 7.5ms
-                assert {$max_latency <= 12}
+                # we expect max latency to be not much higher than 7.5ms but due to rare slowness threshold is set higher
+                assert {$max_latency <= 60}
             }
             # verify the data isn't corrupted or changed
             set newdigest [r debug digest]
