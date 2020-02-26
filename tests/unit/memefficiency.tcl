@@ -60,6 +60,7 @@ start_server {tags {"defrag"}} {
 
             r config set latency-monitor-threshold 5
             r latency reset
+            r config set maxmemory 110mb ;# prevent further eviction (not to fail the digest test)
             set digest [r debug digest]
             catch {r config set activedefrag yes} e
             if {![string match {DISABLED*} $e]} {
