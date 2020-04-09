@@ -70,6 +70,10 @@ ifeq ($(USE_JEMALLOC),no)
 	MALLOC=libc
 endif
 
+ifeq ($(USE_MEMKIND),yes)
+	MALLOC=memkind
+endif
+
 # Override default settings if possible
 -include .make-settings
 
@@ -185,6 +189,11 @@ ifeq ($(BUILD_TLS),yes)
     FINAL_CFLAGS+=-DUSE_OPENSSL $(OPENSSL_CFLAGS)
     FINAL_LDFLAGS+=$(OPENSSL_LDFLAGS)
     FINAL_LIBS += ../deps/hiredis/libhiredis_ssl.a -lssl -lcrypto
+endif
+
+ifeq ($(MALLOC),memkind)
+	FINAL_CFLAGS+= -DUSE_MEMKIND
+	FINAL_LIBS+= -lmemkind -ldaxctl
 endif
 
 REDIS_CC=$(QUIET_CC)$(CC) $(FINAL_CFLAGS)
