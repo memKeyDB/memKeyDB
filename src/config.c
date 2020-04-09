@@ -1965,12 +1965,12 @@ static void numericConfigRewrite(typeData data, const char *name, struct rewrite
 }
 
 static int isValidActiveDefrag(int val, char **err) {
-#ifndef HAVE_DEFRAG
+#if !defined(HAVE_DEFRAG) && !defined(HAVE_DEFRAG_MEMKIND)
     if (val) {
         *err = "Active defragmentation cannot be enabled: it "
                "requires a Redis server compiled with a modified Jemalloc "
                "like the one shipped by default with the Redis source "
-               "distribution";
+               "distribution, or memkind";
         return 0;
     }
 #else

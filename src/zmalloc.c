@@ -384,6 +384,25 @@ int jemalloc_purge() {
     return -1;
 }
 
+#elif defined(USE_MEMKIND)
+int zmalloc_get_allocator_info(size_t *allocated,
+                               size_t *active,
+                               size_t *resident) {
+    memkind_update_cached_stats();
+    memkind_get_stat(NULL, MEMKIND_STAT_TYPE_RESIDENT, resident);
+    memkind_get_stat(NULL, MEMKIND_STAT_TYPE_ACTIVE, active);
+    memkind_get_stat(NULL, MEMKIND_STAT_TYPE_ALLOCATED, allocated);
+    return 1;
+}
+
+void set_jemalloc_bg_thread(int enable) {
+    ((void)(enable));
+}
+
+int jemalloc_purge() {
+    return 0;
+}
+
 #else
 
 int zmalloc_get_allocator_info(size_t *allocated,

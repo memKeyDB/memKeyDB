@@ -82,6 +82,9 @@
 #if defined(USE_JEMALLOC) && defined(JEMALLOC_FRAG_HINT)
 #define HAVE_DEFRAG
 #endif
+#if defined(USE_MEMKIND)
+#define HAVE_DEFRAG_MEMKIND
+#endif
 
 void *zmalloc(size_t size);
 void *zcalloc(size_t size);
