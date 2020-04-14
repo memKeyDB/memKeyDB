@@ -34,15 +34,8 @@ INSTALL_BIN=$(PREFIX)/bin
 INSTALL=install
 PKG_CONFIG?=pkg-config
 
-# Default allocator defaults to Jemalloc if it's not an ARM
-MALLOC=libc
-ifneq ($(uname_M),armv6l)
-ifneq ($(uname_M),armv7l)
-ifeq ($(uname_S),Linux)
-	MALLOC=jemalloc
-endif
-endif
-endif
+# Default allocator defaults to memkind
+MALLOC=memkind
 
 # To get ARM stack traces if Redis crashes we need a special C flag.
 ifneq (,$(filter aarch64 armv,$(uname_M)))
