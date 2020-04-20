@@ -720,4 +720,23 @@ int zmalloc_test(int argc, char **argv) {
     printf("Freed pointer; used: %zu\n", zmalloc_used_memory());
     return 0;
 }
+
+int zmalloc_pmem_test(int argc, char **argv) {
+    void *ptr;
+
+    UNUSED(argc);
+    UNUSED(argv);
+    printf("Initial used PMEM memory: %zu\n", zmalloc_used_pmem_memory());
+    ptr = zmalloc_pmem(123);
+    if (!ptr) {
+       printf("ERROR! can't allocate Persistent Memory\n");
+       return 1;
+    }
+    printf("Allocated 123 bytes; used PMEM memory: %zu\n", zmalloc_used_pmem_memory());
+    ptr = zrealloc(ptr, 456);
+    printf("Reallocated to 456 bytes; used PMEM memory: %zu\n", zmalloc_used_pmem_memory());
+    zfree(ptr);
+    printf("Freed pointer; used PMEM memory: %zu\n", zmalloc_used_pmem_memory());
+    return 0;
+}
 #endif
