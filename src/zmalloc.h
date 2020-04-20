@@ -90,6 +90,7 @@ void *zmalloc(size_t size);
 void *zcalloc(size_t size);
 void *zrealloc(void *ptr, size_t size);
 void zfree(void *ptr);
+void zfree_dram(void *ptr);
 char *zstrdup(const char *s);
 size_t zmalloc_used_memory(void);
 void zmalloc_set_oom_handler(void (*oom_handler)(size_t));
@@ -102,6 +103,8 @@ size_t zmalloc_get_smap_bytes_by_field(char *field, long pid);
 size_t zmalloc_get_memory_size(void);
 void zlibc_free(void *ptr);
 void zmalloc_set_threshold(size_t threshold);
+void *zmalloc_dram(size_t size);
+void *zcalloc_dram(size_t size);
 
 #ifdef HAVE_DEFRAG
 void zfree_no_tcache(void *ptr);
