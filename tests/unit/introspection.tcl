@@ -98,6 +98,8 @@ start_server {tags {"introspection"}} {
             memory-alloc-policy
             initial-dynamic-threshold
             dynamic-threshold-min
+            dynamic-threshold-max
+            memory-ratio-check-period
         }
 
         set configs {}
