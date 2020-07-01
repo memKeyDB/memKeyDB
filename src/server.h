@@ -1756,6 +1756,7 @@ void incrRefCount(robj *o);
 robj *makeObjectShared(robj *o);
 robj *resetRefCount(robj *obj);
 void freeStringObject(robj *o);
+void freeStringObjectOptim(robj *o);
 void freeListObject(robj *o);
 void freeSetObject(robj *o);
 void freeZsetObject(robj *o);

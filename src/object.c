@@ -281,6 +281,12 @@ robj *createModuleObject(moduleType *mt, void *value) {
     return createObject(OBJ_MODULE,mv);
 }
 
+void freeStringObjectOptim(robj *o) {
+    if (o->encoding == OBJ_ENCODING_RAW) {
+        sdsfreeOptim(o->ptr);
+    }
+}
+
 void freeStringObject(robj *o) {
     if (o->encoding == OBJ_ENCODING_RAW) {
         sdsfree(o->ptr);
@@ -364,7 +370,7 @@ void incrRefCount(robj *o) {
 static void _decrRefCount(robj *o, int on_dram) {
     if (o->refcount == 1) {
         switch(o->type) {
-        case OBJ_STRING: freeStringObject(o); break;
+        case OBJ_STRING: freeStringObjectOptim(o); break;
         case OBJ_LIST: freeListObject(o); break;
         case OBJ_SET: freeSetObject(o); break;
         case OBJ_ZSET: freeZsetObject(o); break;
