@@ -237,6 +237,12 @@ robj *createZsetZiplistObject(void) {
     return o;
 }
 
+void freeStringObjectOptim(robj *o) {
+    if (o->encoding == OBJ_ENCODING_RAW) {
+        sdsfreeOptim(o->ptr);
+    }
+}
+
 void freeStringObject(robj *o) {
     if (o->encoding == OBJ_ENCODING_RAW) {
         sdsfree(o->ptr);
@@ -303,7 +309,7 @@ static void _decrRefCount(robj *o, int on_dram) {
     if (o->refcount <= 0) serverPanic("decrRefCount against refcount <= 0");
     if (o->refcount == 1) {
         switch(o->type) {
-        case OBJ_STRING: freeStringObject(o); break;
+        case OBJ_STRING: freeStringObjectOptim(o); break;
         case OBJ_LIST: freeListObject(o); break;
         case OBJ_SET: freeSetObject(o); break;
         case OBJ_ZSET: freeZsetObject(o); break;
