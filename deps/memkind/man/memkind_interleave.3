@@ -1,0 +1,31 @@
+.\" SPDX-License-Identifier: BSD-2-Clause
+.\" Copyright (C) 2016 - 2020 Intel Corporation.
+.\"
+.TH "MEMKIND_INTERLEAVE" 3 "2016-02-19" "Intel Corporation" "MEMKIND_INTERLEAVE" \" -*- nroff -*-
+.SH "NAME"
+memkind_interleave \- interleave memory memkind operations.
+.br
+.BR Note:
+This is EXPERIMENTAL API. The functionality and the header file itself can be changed (including non-backward compatible changes) or removed.
+.SH "SYNOPSIS"
+.sp
+.BI "void memkind_interleave_init_once(void);"
+.br
+.SH DESCRIPTION
+.PP
+.BR memkind_interleave_init_once ()
+initializes MEMKIND_INTERLEAVE kind and it should not be called more than once.
+.BR Note:
+.BR memkind_interleave_init_once ()
+may reserve some extra memory.
+.SH "COPYRIGHT"
+Copyright (C) 2016 - 2020 Intel Corporation. All rights reserved.
+.SH "SEE ALSO"
+.BR memkind (3),
+.BR memkind_arena (3),
+.BR memkind_default (3),
+.BR memkind_hbw (3),
+.BR memkind_pmem (3),
+.BR jemalloc (3),
+.BR mbind (2),
+.BR mmap (2)

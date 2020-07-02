@@ -1,0 +1,105 @@
+.\" SPDX-License-Identifier: BSD-2-Clause
+.\" Copyright (C) 2015 - 2020 Intel Corporation.
+.\"
+.TH "HBWALLOCATOR" 3 "2015-11-02" "Intel Corporation" "HBWALLOCATOR" \" -*- nroff -*-
+.SH "NAME"
+hbw::allocator<T> \- The C++ allocator compatible with the C++ standard library allocator concepts
+.br
+.BR Note:
+This is EXPERIMENTAL API. The functionality and the header file itself can be changed (including non-backward compatible changes) or removed.
+.SH "SYNOPSIS"
+.nf
+.B #include <hbw_allocator.h>
+.sp
+.B Link with -lmemkind
+.sp
+.BI "hbw::allocator();"
+.br
+.BI "template <class U>hbw::allocator<T>::allocator(const hbw::allocator<U>&);
+.br
+.BI "hbw::allocator<T>::~allocator()'"
+.br
+.BI "hbw::allocator<T>::pointer hbw::allocator<T>::address(hbw::allocator<T>::reference " "x" );
+.br
+.BI "hbw::allocator<T>::const_pointer hbw::allocator<T>::address(hbw::allocator<T>::const_reference " "x" );
+.br
+.BI "hbw::allocator<T>::pointer hbw::allocator<T>::allocate(hbw::allocator<T>::size_type " "n" ", const void * = 0);
+.br
+.BI "void hbw::allocator<T>::deallocate(hbw::allocator<T>::pointer " "p" ", hbw::allocator<T>::size_type " "n" );
+.br
+.BI "hbw::allocator<T>::size_type  hbw::allocator<T>::max_size();
+.br
+.BI "void hbw::allocator<T>::construct(hbw::allocator<T>::pointer " "p" ", const hbw::allocator<T>::value_type& " "val" );
+.br
+.BI "void hbw::allocator<T>::destroy(hbw::allocator<T>::pointer " "p" );
+.fi
+.SH "DESCRIPTION"
+The
+.BR hbw::allocator<T>
+is intended to be used with STL containers to allocate high bandwidth memory. Memory management is based on hbwmalloc (memkind library), enabling users to gain performance in multithreaded applications. Refer
+.BR hbwmalloc (3)
+and
+.BR memkind (3)
+man page for more details.
+.PP
+All public member types and functions corresponds to standard library allocator concepts and definitions. The current implementation supports C++03 standard.
+.PP
+Template arguments:
+.br
+.I T
+is an object type aliased by value_type.
+.br
+.I U
+is an object type.
+.PP
+.B Note:
+.br
+.BI "hbw::allocator<T>::pointer hbw::allocator<T>::allocate(hbw::allocator<T>::size_type " "n" ", const void * = 0)"
+allocates high bandwidth memory using
+.BR hbw_malloc ().
+Throw
+.I std::bad_alloc
+when:
+.br
+.RS
+.I n
+= 0,
+.RE
+.br
+.RS
+.I n
+>
+.BR max_size ()
+.RE
+.br
+.RS
+or there is not enough memory to satisfy the request.
+.RE
+.PP
+.BI "hbw::allocator<T>::deallocate(hbw::allocator<T>::pointer " "p" ", hbw::allocator<T>::size_type " "n")
+deallocates memory associated with pointer returned by
+.BR allocate ()
+using
+.BR hbw_free ().
+
+.SH ERRORS
+The same as described in
+.B ERRORS
+section of
+.BR hbwmalloc (3)
+man page.
+.SH "NOTES"
+The
+.BR hbw::allocator<T>
+behavior depends on hbwmalloc heap management policy. To get and set the policy please use
+.BR hbw_get_policy ()
+and
+.BR hbw_set_policy ()
+respectively.
+.SH "COPYRIGHT"
+Copyright (C) 2015 - 2020 Intel Corporation. All rights reserved.
+.SH "SEE ALSO"
+.BR hbwmalloc (3),
+.BR numa (3),
+.BR numactl (8),
+.BR memkind (3)
