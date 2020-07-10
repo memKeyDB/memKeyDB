@@ -1698,8 +1698,11 @@ void databasesCron(void) {
     }
 
     /* Adjust PMEM threshold. */
-    adjustPmemThresholdCycle();
-
+    if (server.memory_alloc_policy == MEM_POLICY_RATIO) {
+        run_with_period(server.ratio_check_period) {
+            adjustPmemThresholdCycle();
+        }
+    }
     /* Defrag keys gradually. */
     activeDefragCycle();
 
