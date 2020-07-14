@@ -147,8 +147,41 @@ static void *zrealloc_pmem(void *ptr, size_t size) {
 static size_t pmem_threshold = UINT_MAX;
 static size_t used_memory = 0;
 static size_t used_pmem_memory = 0;
+static long long pre_gap=0;
+static double  pmem_dram_ratio=0.0;
+static int use_ratio=0;
+static unsigned int dynamic_min_threshold=0;
+static unsigned int dynamic_max_threshold=0;
+
 pthread_mutex_t used_memory_mutex = PTHREAD_MUTEX_INITIALIZER;
 pthread_mutex_t used_pmem_memory_mutex = PTHREAD_MUTEX_INITIALIZER;
+
+static void  adjustPmemThresholdCycle(void) {
+    if(use_ratio) {
+        size_t pmem_memory = zmalloc_used_pmem_memory();
+        size_t dram_memory = zmalloc_used_memory();
+        long long gap;
+        unsigned int adjust;
+        gap = pmem_memory - (size_t)(dram_memory*pmem_dram_ratio);
+	//only the gap over 2M Bytes, then we will adjust the pmem_threshold
+	if(abs(gap) > abs(pre_gap) +2*1024*1024) {
+	    if(gap>0) {
+		adjust = ((gap-pre_gap)>>20) *1;
+		pmem_threshold += adjust;
+		if(pmem_threshold > dynamic_max_threshold) 
+	            pmem_threshold=dynamic_max_threshold;
+	    }   
+	    else {
+		adjust=((pre_gap-gap)>>20)*1;
+		if(pmem_threshold>adjust +dynamic_min_threshold)
+		    pmem_threshold-=adjust;
+		else
+	            pmem_threshold=dynamic_min_threshold;
+	    }
+	    pre_gap=gap;
+	}
+    }
+}
 
 static void zmalloc_default_oom(size_t size) {
     fprintf(stderr, "zmalloc: Out of memory trying to allocate %zu bytes\n",
@@ -262,6 +295,7 @@ static void *zrealloc_pmem(void *ptr, size_t size) {
 #endif
 
 void *zmalloc(size_t size) {
+    adjustPmemThresholdCycle();
     return (size < pmem_threshold) ? zmalloc_dram(size) : zmalloc_pmem(size);
 }
 
@@ -280,7 +314,8 @@ void *zcalloc_dram(size_t size) {
 }
 
 void *zcalloc(size_t size) {
-    return (size < pmem_threshold) ? zcalloc_dram(size) : zcalloc_pmem(size);
+   adjustPmemThresholdCycle(); 
+   return (size < pmem_threshold) ? zcalloc_dram(size) : zcalloc_pmem(size);
 }
 
 void *zrealloc_dram(void *ptr, size_t size) {
@@ -397,6 +432,16 @@ size_t zmalloc_get_threshold(void) {
 
 void zmalloc_set_threshold(size_t threshold) {
     pmem_threshold = threshold;
+}
+
+
+void zmalloc_set_pmem_dram_ratio(int useratio, double ratio) {
+	use_ratio=useratio;
+	pmem_dram_ratio = ratio;
+}
+void zmalloc_set_threshold_range(unsigned int min, unsigned int max) {
+	dynamic_min_threshold=min;
+	dynamic_max_threshold=max;	
 }
 
 /* Get the RSS information in an OS-specific way.
