@@ -1442,7 +1442,7 @@ robj *rdbLoadObject(int rdbtype, rio *rdb, sds key) {
 
         /* Load every single element of the list */
         while(len--) {
-            if (len%100) {
+            if (len%100 == 0) {
                 adjustPmemThresholdCycle();
             }
             if ((ele = rdbLoadEncodedStringObject(rdb)) == NULL) {
@@ -1475,7 +1475,7 @@ robj *rdbLoadObject(int rdbtype, rio *rdb, sds key) {
             long long llval;
             sds sdsele;
 
-            if (i%100) {
+            if (i%100 == 0) {
                 adjustPmemThresholdCycle();
             }
 
@@ -1521,7 +1521,7 @@ robj *rdbLoadObject(int rdbtype, rio *rdb, sds key) {
             double score;
             zskiplistNode *znode;
 
-            if (zsetlen%100) {
+            if (zsetlen%100 == 0) {
                 adjustPmemThresholdCycle();
             }
 
@@ -1573,7 +1573,7 @@ robj *rdbLoadObject(int rdbtype, rio *rdb, sds key) {
         while (o->encoding == OBJ_ENCODING_ZIPLIST && len > 0) {
             len--;
 
-            if (len%100) {
+            if (len%100 == 0) {
                 adjustPmemThresholdCycle();
             }
 
@@ -1640,7 +1640,7 @@ robj *rdbLoadObject(int rdbtype, rio *rdb, sds key) {
                             server.list_compress_depth);
 
         while (len--) {
-            if (len%100) {
+            if (len%100 == 0) {
                 adjustPmemThresholdCycle();
             }
             unsigned char *zl =
@@ -2098,7 +2098,7 @@ int rdbLoadRio(rio *rdb, int rdbflags, rdbSaveInfo *rsi) {
         sds key;
         robj *val;
         i++;
-        if (i%1000) {
+        if (i%1000 == 0) {
             i=0;
             adjustPmemThresholdCycle();
         }
