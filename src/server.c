@@ -1033,7 +1033,11 @@ void databasesCron(void) {
         activeExpireCycle(ACTIVE_EXPIRE_CYCLE_SLOW);
 
     /* Adjust PMEM threshold. */
-    adjustPmemThresholdCycle();
+    if (server.memory_alloc_policy == MEM_POLICY_RATIO) {
+        run_with_period(server.ratio_check_period) {
+            adjustPmemThresholdCycle();
+        }
+    }
 
     /* Perform hash tables rehashing if needed, but only if there are no
      * other processes saving the DB on disk. Otherwise rehashing is bad
