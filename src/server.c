@@ -303,6 +303,29 @@ struct redisCommand redisCommandTable[] = {
 
 struct evictionPoolEntry *evictionPoolAlloc(void);
 
+/* Initialize the pmem threshold. */
+static void pmemThresholdInit(void) {
+    switch(server.memory_alloc_policy) {
+        case MEM_POLICY_ONLY_DRAM:
+            zmalloc_set_threshold(UINT_MAX);
+            break;
+        case MEM_POLICY_ONLY_PMEM:
+            zmalloc_set_threshold(0U);
+            break;
+        case MEM_POLICY_THRESHOLD:
+            zmalloc_set_threshold(server.static_threshold);
+            break;
+        case MEM_POLICY_RATIO:
+            zmalloc_set_threshold(server.initial_dynamic_threshold);
+            zmalloc_set_pmem_dram_ratio(server.target_pmem_dram_ratio);
+            zmalloc_set_threshold_range(server.dynamic_threshold_min, server.dynamic_threshold_max);
+            break;
+        default:
+            serverAssert(NULL);
+    }
+}
+
+
 /*============================ Utility functions ============================ */
 
 /* Low level logging. To use only for very big messages, otherwise
@@ -1032,9 +1055,6 @@ void databasesCron(void) {
     if (server.active_expire_enabled && server.masterhost == NULL)
         activeExpireCycle(ACTIVE_EXPIRE_CYCLE_SLOW);
 
-    /* Adjust PMEM threshold. */
-    adjustPmemThresholdCycle();
-
     /* Perform hash tables rehashing if needed, but only if there are no
      * other processes saving the DB on disk. Otherwise rehashing is bad
      * as will cause a lot of copy-on-write of memory pages. */
@@ -1522,7 +1542,6 @@ void initServerConfig(void) {
     server.maxclients = CONFIG_DEFAULT_MAX_CLIENTS;
     server.hashtable_on_dram = 1;
     server.memory_alloc_policy = MEM_POLICY_ONLY_DRAM;
-    server.ratio_check_period = 100;
     server.initial_dynamic_threshold = 64;
     server.dynamic_threshold_min = 24;
     server.dynamic_threshold_max = 10000;
