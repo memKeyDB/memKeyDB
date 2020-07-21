@@ -183,7 +183,7 @@ int prepareClientToWrite(client *c) {
          * a system call. We'll only really install the write handler if
          * we'll not be able to write the whole reply at once. */
         c->flags |= CLIENT_PENDING_WRITE;
-        listAddNodeHead(server.clients_pending_write,c);
+        listAddNodeHeadDRAM(server.clients_pending_write,c);
     }
 
     /* Authorize the caller to queue in the output buffer of this client. */
