@@ -5639,7 +5639,7 @@ void moduleHandleBlockedClients(void) {
                 !(c->flags & CLIENT_PENDING_WRITE))
             {
                 c->flags |= CLIENT_PENDING_WRITE;
-                listAddNodeHead(server.clients_pending_write,c);
+                listAddNodeHeadDRAM(server.clients_pending_write,c);
             }
         }
 

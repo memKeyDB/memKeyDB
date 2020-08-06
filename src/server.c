@@ -1861,6 +1861,12 @@ void databasesCron(void) {
         }
     }
 
+    /* Adjust PMEM threshold. */
+    if (server.memory_alloc_policy == MEM_POLICY_RATIO) {
+        run_with_period(server.ratio_check_period) {
+            adjustPmemThresholdCycle();
+        }
+    }
     /* Defrag keys gradually. */
     activeDefragCycle();
 
@@ -3354,6 +3360,9 @@ void initServer(void) {
     
     /* Initialize ACL default password if it exists */
     ACLUpdateDefaultUserPassword(server.requirepass);
+
+    pmemThresholdInit();
+    dictSetAllocPolicy(server.hashtable_on_dram);
 }
 
 /* Some steps in server initialization need to be done last (after modules
@@ -4747,6 +4756,8 @@ sds genRedisInfoString(const char *section) {
     /* Memory */
     if (allsections || defsections || !strcasecmp(section,"memory")) {
         char hmem[64];
+        char hmem_dram[64];
+        char hmem_pmem[64];
         char peak_hmem[64];
         char total_system_hmem[64];
         char used_memory_lua_hmem[64];
@@ -4754,7 +4765,10 @@ sds genRedisInfoString(const char *section) {
         char used_memory_rss_hmem[64];
         char maxmemory_hmem[64];
         size_t zmalloc_used = zmalloc_used_memory();
+        size_t zmalloc_dram_used = zmalloc_used_dram_memory();
+        size_t zmalloc_pmem_used = zmalloc_used_pmem_memory();
         size_t total_system_mem = server.system_memory_size;
+        size_t pmem_threshold = zmalloc_get_threshold();
         const char *evict_policy = evictPolicyToString();
         long long memory_lua = server.lua ? (long long)lua_gc(server.lua,LUA_GCCOUNT,0)*1024 : 0;
         struct redisMemOverhead *mh = getMemoryOverheadData();
@@ -4767,6 +4781,8 @@ sds genRedisInfoString(const char *section) {
             server.stat_peak_memory = zmalloc_used;
 
         bytesToHuman(hmem,zmalloc_used);
+        bytesToHuman(hmem_dram,zmalloc_dram_used);
+        bytesToHuman(hmem_pmem,zmalloc_pmem_used);
         bytesToHuman(peak_hmem,server.stat_peak_memory);
         bytesToHuman(total_system_hmem,total_system_mem);
         bytesToHuman(used_memory_lua_hmem,memory_lua);
@@ -4788,6 +4804,11 @@ sds genRedisInfoString(const char *section) {
             "used_memory_startup:%zu\r\n"
             "used_memory_dataset:%zu\r\n"
             "used_memory_dataset_perc:%.2f%%\r\n"
+            "pmem_threshold:%zu\r\n"
+            "used_memory_dram:%zu\r\n"
+            "used_memory_dram_human:%s\r\n"
+            "used_memory_pmem:%zu\r\n"
+            "used_memory_pmem_human:%s\r\n"
             "allocator_allocated:%zu\r\n"
             "allocator_active:%zu\r\n"
             "allocator_resident:%zu\r\n"
@@ -4829,6 +4850,11 @@ sds genRedisInfoString(const char *section) {
             mh->startup_allocated,
             mh->dataset,
             mh->dataset_perc,
+            pmem_threshold,
+            zmalloc_dram_used,
+            hmem_dram,
+            zmalloc_pmem_used,
+            hmem_pmem,
             server.cron_malloc_stats.allocator_allocated,
             server.cron_malloc_stats.allocator_active,
             server.cron_malloc_stats.allocator_resident,
@@ -6135,7 +6161,8 @@ struct redisTest {
     {"crc64", crc64Test},
     {"zmalloc", zmalloc_test},
     {"sds", sdsTest},
-    {"dict", dictTest}
+    {"dict", dictTest},
+    {"pmem", zmalloc_pmem_test}
 };
 redisTestProc *getTestProcByName(const char *name) {
     int numtests = sizeof(redisTests)/sizeof(struct redisTest);

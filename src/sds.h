@@ -64,12 +64,14 @@ struct __attribute__ ((__packed__)) sdshdr32 {
     uint32_t len; /* used */
     uint32_t alloc; /* excluding the header and null terminator */
     unsigned char flags; /* 3 lsb of type, 5 unused bits */
+    char padding; /* Added to have unique value for %8 operation*/
     char buf[];
 };
 struct __attribute__ ((__packed__)) sdshdr64 {
     uint64_t len; /* used */
     uint64_t alloc; /* excluding the header and null terminator */
     unsigned char flags; /* 3 lsb of type, 5 unused bits */
+    char padding[3]; /* Added to have unique value for %8 operation */
     char buf[];
 };
 
@@ -83,6 +85,7 @@ struct __attribute__ ((__packed__)) sdshdr64 {
 #define SDS_HDR_VAR(T,s) struct sdshdr##T *sh = (void*)((s)-(sizeof(struct sdshdr##T)));
 #define SDS_HDR(T,s) ((struct sdshdr##T *)((s)-(sizeof(struct sdshdr##T))))
 #define SDS_TYPE_5_LEN(f) ((f)>>SDS_TYPE_BITS)
+#define SDS_MOD8(T) (sizeof(struct sdshdr##T)&7)
 
 static inline size_t sdslen(const sds s) {
     unsigned char flags = s[-1];
@@ -219,8 +222,10 @@ sds sdsnewlen(const void *init, size_t initlen);
 sds sdstrynewlen(const void *init, size_t initlen);
 sds sdsnew(const char *init);
 sds sdsempty(void);
+sds sdsdramempty(void);
 sds sdsdup(const sds s);
 void sdsfree(sds s);
+void sdsfreeOptim(sds s);
 sds sdsgrowzero(sds s, size_t len);
 sds sdscatlen(sds s, const void *t, size_t len);
 sds sdscat(sds s, const char *t);

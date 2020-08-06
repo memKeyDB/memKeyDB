@@ -41,6 +41,9 @@
 
 const char *SDS_NOINIT = "SDS_NOINIT";
 
+#define SDS_GENERAL_VARIANT  0
+#define SDS_DRAM_VARIANT     1
+
 static inline int sdsHdrSize(char type) {
     switch(type&SDS_TYPE_MASK) {
         case SDS_TYPE_5:
@@ -52,6 +55,24 @@ static inline int sdsHdrSize(char type) {
         case SDS_TYPE_32:
             return sizeof(struct sdshdr32);
         case SDS_TYPE_64:
+            return sizeof(struct sdshdr64);
+    }
+    return 0;
+}
+
+/* Returns size of sdsHdr by checking pointer alignment (expects 8 byte
+ * alignment). Optimizes retriving sdsHdr size by not refering to sds data */
+static inline int sdsHdrSizeOptim(char* s) {
+    switch((uintptr_t)s&7) {
+        case SDS_MOD8(5):
+            return sizeof(struct sdshdr5);
+        case SDS_MOD8(8):
+            return sizeof(struct sdshdr8);
+        case SDS_MOD8(16):
+            return sizeof(struct sdshdr16);
+        case SDS_MOD8(32):
+            return sizeof(struct sdshdr32);
+        case SDS_MOD8(64):
             return sizeof(struct sdshdr64);
     }
     return 0;
@@ -100,7 +121,7 @@ static inline size_t sdsTypeMaxSize(char type) {
  * You can print the string with printf() as there is an implicit \0 at the
  * end of the string. However the string is binary safe and can contain
  * \0 characters in the middle, as the length is stored in the sds header. */
-sds _sdsnewlen(const void *init, size_t initlen, int trymalloc) {
+sds _sdsnewlen(const void *init, size_t initlen, int trymalloc, int on_dram) {
     void *sh;
     sds s;
     char type = sdsReqType(initlen);
@@ -112,9 +133,13 @@ sds _sdsnewlen(const void *init, size_t initlen, int trymalloc) {
     size_t usable;
 
     assert(initlen + hdrlen + 1 > initlen); /* Catch size_t overflow */
-    sh = trymalloc?
-        s_trymalloc_usable(hdrlen+initlen+1, &usable) :
-        s_malloc_usable(hdrlen+initlen+1, &usable);
+    if (trymalloc) {
+        sh = (on_dram == SDS_DRAM_VARIANT) ? s_dram_trymalloc_usable(hdrlen+initlen+1, &usable)
+                                           : s_trymalloc_usable(hdrlen+initlen+1, &usable);
+    } else {
+        sh = (on_dram == SDS_DRAM_VARIANT) ? s_dram_malloc_usable(hdrlen+initlen+1, &usable)
+                                           : s_malloc_usable(hdrlen+initlen+1, &usable);
+    }
     if (sh == NULL) return NULL;
     if (init==SDS_NOINIT)
         init = NULL;
@@ -166,17 +191,27 @@ sds _sdsnewlen(const void *init, size_t initlen, int trymalloc) {
 }
 
 sds sdsnewlen(const void *init, size_t initlen) {
-    return _sdsnewlen(init, initlen, 0);
+    return _sdsnewlen(init, initlen, 0, SDS_GENERAL_VARIANT);
 }
 
 sds sdstrynewlen(const void *init, size_t initlen) {
-    return _sdsnewlen(init, initlen, 1);
+    return _sdsnewlen(init, initlen, 1, SDS_GENERAL_VARIANT);
+}
+
+static sds sdsdramnewlen(const void *init, size_t initlen) {
+    return _sdsnewlen(init, initlen, 0, SDS_DRAM_VARIANT);
 }
 
 /* Create an empty (zero length) sds string. Even in this case the string
  * always has an implicit null term. */
 sds sdsempty(void) {
     return sdsnewlen("",0);
+}
+
+/* Create an empty (zero length) sds string on DRAM. Even in this case the string
+ * always has an implicit null term. */
+sds sdsdramempty(void) {
+    return sdsdramnewlen("",0);
 }
 
 /* Create a new sds string starting from a null terminated C string. */
@@ -194,6 +229,11 @@ sds sdsdup(const sds s) {
 void sdsfree(sds s) {
     if (s == NULL) return;
     s_free((char*)s-sdsHdrSize(s[-1]));
+}
+
+void sdsfreeOptim(sds s) {
+    if (s == NULL) return;
+    s_free((char*)s-sdsHdrSizeOptim(s));
 }
 
 /* Set the sds string length to the length as obtained with strlen(), so
