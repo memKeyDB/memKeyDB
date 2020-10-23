@@ -1347,7 +1347,6 @@ struct redisServer {
     unsigned int dynamic_threshold_max;       /* Maximum value of dynamic threshold */
     ratioDramPmemConfig dram_pmem_ratio;      /* DRAM/Persistent Memory ratio */
     double target_pmem_dram_ratio;            /* Target PMEM/DRAM ratio */
-    int ratio_check_period;                   /* Period of checking ratio in Cron*/
     int hashtable_on_dram;                    /* Keep hashtable always on DRAM */
     /* Blocked clients */
     unsigned int blocked_clients;   /* # of clients executing a blocking cmd.*/
@@ -2215,10 +2214,6 @@ unsigned long LFUDecrAndReturn(robj *o);
 uint64_t dictSdsHash(const void *key);
 int dictSdsKeyCompare(void *privdata, const void *key1, const void *key2);
 void dictSdsDestructor(void *privdata, void *val);
-
-/* pmem.c - Handling Persistent Memory */
-void pmemThresholdInit(void);
-void adjustPmemThresholdCycle(void);
 
 /* Git SHA1 */
 char *redisGitSHA1(void);
