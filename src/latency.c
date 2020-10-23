@@ -71,7 +71,7 @@ int THPIsEnabled(void) {
         return 0;
     }
     fclose(fp);
-    return (strstr(buf,"[never]") == NULL) ? 1 : 0;
+    return (strstr(buf,"[always]") != NULL) ? 1 : 0;
 }
 #endif
 
@@ -621,7 +621,7 @@ NULL
                 resets += latencyResetEvent(c->argv[j]->ptr);
             addReplyLongLong(c,resets);
         }
-    } else if (!strcasecmp(c->argv[1]->ptr,"help") && c->argc >= 2) {
+    } else if (!strcasecmp(c->argv[1]->ptr,"help") && c->argc == 2) {
         addReplyHelp(c, help);
     } else {
         addReplySubcommandSyntaxError(c);

@@ -1240,6 +1240,12 @@ void updateSlavesWaitingBgsave(int bgsaveerr, int type) {
         } else if (slave->replstate == SLAVE_STATE_WAIT_BGSAVE_END) {
             struct redis_stat buf;
 
+            if (bgsaveerr != C_OK) {
+                freeClient(slave);
+                serverLog(LL_WARNING,"SYNC failed. BGSAVE child returned an error");
+                continue;
+            }
+
             /* If this was an RDB on disk save, we have to prepare to send
              * the RDB from disk to the slave socket. Otherwise if this was
              * already an RDB -> Slaves socket transfer, used in the case of
@@ -1278,11 +1284,6 @@ void updateSlavesWaitingBgsave(int bgsaveerr, int type) {
                 slave->repl_put_online_on_ack = 1;
                 slave->repl_ack_time = server.unixtime; /* Timeout otherwise. */
             } else {
-                if (bgsaveerr != C_OK) {
-                    freeClient(slave);
-                    serverLog(LL_WARNING,"SYNC failed. BGSAVE child returned an error");
-                    continue;
-                }
                 if ((slave->repldbfd = open(server.rdb_filename,O_RDONLY)) == -1 ||
                     redis_fstat(slave->repldbfd,&buf) == -1) {
                     freeClient(slave);
@@ -2157,6 +2158,7 @@ void syncWithMaster(connection *conn) {
          * both. */
         if (err[0] != '+' &&
             strncmp(err,"-NOAUTH",7) != 0 &&
+            strncmp(err,"-NOPERM",7) != 0 &&
             strncmp(err,"-ERR operation not permitted",28) != 0)
         {
             serverLog(LL_WARNING,"Error reply to PING from master: '%s'",err);
@@ -2481,6 +2483,9 @@ void replicationSetMaster(char *ip, int port) {
     }
     disconnectAllBlockedClients(); /* Clients blocked in master, now slave. */
 
+    /* Update oom_score_adj */
+    setOOMScoreAdj(-1);
+
     /* Force our slaves to resync with us as well. They may hopefully be able
      * to partially resync with us, but we can notify the replid change. */
     disconnectSlaves();
@@ -2542,6 +2547,9 @@ void replicationUnsetMaster(void) {
      * with PSYNC version 2, there is no need for full resync after a
      * master switch. */
     server.slaveseldb = -1;
+
+    /* Update oom_score_adj */
+    setOOMScoreAdj(-1);
 
     /* Once we turn from slave to master, we consider the starting time without
      * slaves (that is used to count the replication backlog time to live) as
@@ -2821,6 +2829,11 @@ void replicationResurrectCachedMaster(connection *conn) {
     server.master->lastinteraction = server.unixtime;
     server.repl_state = REPL_STATE_CONNECTED;
     server.repl_down_since = 0;
+
+    /* Fire the master link modules event. */
+    moduleFireServerEvent(REDISMODULE_EVENT_MASTER_LINK_CHANGE,
+                          REDISMODULE_SUBEVENT_MASTER_LINK_UP,
+                          NULL);
 
     /* Re-add to the list of clients. */
     linkClient(server.master);

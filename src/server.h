@@ -150,6 +150,14 @@ typedef long long ustime_t; /* microsecond time type. */
  * in order to make sure of not over provisioning more than 128 fds. */
 #define CONFIG_FDSET_INCR (CONFIG_MIN_RESERVED_FDS+96)
 
+/* OOM Score Adjustment classes. */
+#define CONFIG_OOM_MASTER 0
+#define CONFIG_OOM_REPLICA 1
+#define CONFIG_OOM_BGCHILD 2
+#define CONFIG_OOM_COUNT 3
+
+extern int configOOMScoreAdjValuesDefaults[CONFIG_OOM_COUNT];
+
 /* Hash table parameters */
 #define HASHTABLE_MIN_FILL        10      /* Minimal hash table fill 10% */
 
@@ -358,6 +366,11 @@ typedef long long ustime_t; /* microsecond time type. */
 #define REPL_DISKLESS_LOAD_WHEN_DB_EMPTY 1
 #define REPL_DISKLESS_LOAD_SWAPDB 2
 
+/* TLS Client Authentication */
+#define TLS_CLIENT_AUTH_NO 0
+#define TLS_CLIENT_AUTH_YES 1
+#define TLS_CLIENT_AUTH_OPTIONAL 2
+
 /* Sets operations codes */
 #define SET_OP_UNION 0
 #define SET_OP_DIFF 1
@@ -426,6 +439,7 @@ typedef long long ustime_t; /* microsecond time type. */
 #define NOTIFY_EVICTED (1<<9)     /* e */
 #define NOTIFY_STREAM (1<<10)     /* t */
 #define NOTIFY_KEY_MISS (1<<11)   /* m (Note: This one is excluded from NOTIFY_ALL on purpose) */
+#define NOTIFY_LOADED (1<<12)     /* module only key space notification, indicate a key loaded from rdb */
 #define NOTIFY_ALL (NOTIFY_GENERIC | NOTIFY_STRING | NOTIFY_LIST | NOTIFY_SET | NOTIFY_HASH | NOTIFY_ZSET | NOTIFY_EXPIRED | NOTIFY_EVICTED | NOTIFY_STREAM) /* A flag */
 
 /* Get the first bind addr or NULL */
@@ -672,6 +686,9 @@ typedef struct multiState {
     int cmd_flags;          /* The accumulated command flags OR-ed together.
                                So if at least a command has a given flag, it
                                will be set in this field. */
+    int cmd_inv_flags;      /* Same as cmd_flags, OR-ing the ~flags. so that it
+                               is possible to know if all the commands have a
+                               certain flag. */
     int minreplicas;        /* MINREPLICAS for synchronous replication */
     time_t minreplicas_timeout; /* MINREPLICAS timeout as unixtime. */
 } multiState;
@@ -1019,6 +1036,9 @@ typedef struct redisTLSContextConfig {
     char *ciphers;
     char *ciphersuites;
     int prefer_server_ciphers;
+    int session_caching;
+    int session_cache_size;
+    int session_cache_timeout;
 } redisTLSContextConfig;
 
 /*-----------------------------------------------------------------------------
@@ -1107,6 +1127,7 @@ struct redisServer {
                                    queries. Will still serve RESP2 queries. */
     int io_threads_num;         /* Number of IO threads to use. */
     int io_threads_do_reads;    /* Read and parse from IO threads? */
+    int io_threads_active;      /* Is IO threads currently active? */
     long long events_processed_while_blocked; /* processEventsWhileBlocked() */
 
     /* RDB / AOF loading information */
@@ -1156,6 +1177,10 @@ struct redisServer {
     size_t stat_module_cow_bytes;   /* Copy on write bytes during module fork. */
     uint64_t stat_clients_type_memory[CLIENT_TYPE_COUNT];/* Mem usage by type */
     long long stat_unexpected_error_replies; /* Number of unexpected (aof-loading, replica to master, etc.) error replies */
+    long long stat_io_reads_processed; /* Number of read events processed by IO / Main threads */
+    long long stat_io_writes_processed; /* Number of write events processed by IO / Main threads */
+    _Atomic long long stat_total_reads_processed; /* Total number of read events processed */
+    _Atomic long long stat_total_writes_processed; /* Total number of write events processed */
     /* The following two are used to track instantaneous metrics, like
      * number of operations per second, network traffic. */
     struct {
@@ -1339,6 +1364,9 @@ struct redisServer {
     int lfu_log_factor;             /* LFU logarithmic counter factor. */
     int lfu_decay_time;             /* LFU counter decay factor. */
     long long proto_max_bulk_len;   /* Protocol bulk length maximum size. */
+    int oom_score_adj_base;         /* Base oom_score_adj value, as observed on startup */
+    int oom_score_adj_values[CONFIG_OOM_COUNT];   /* Linux oom_score_adj configuration */
+    int oom_score_adj;                            /* If true, oom_score_adj is managed */
     /* PMEM */
     int memory_alloc_policy;                  /* Policy for memory allocation */
     unsigned int static_threshold;            /* Persistent Memory static threshold */
@@ -1407,6 +1435,7 @@ struct redisServer {
                                       REDISMODULE_CLUSTER_FLAG_*. */
     int cluster_allow_reads_when_down; /* Are reads allowed when the cluster
                                         is down? */
+    int cluster_config_file_lock_fd;   /* cluster config fd, will be flock */
     /* Scripting */
     lua_State *lua; /* The Lua interpreter. We use just one for all clients */
     client *lua_client;   /* The "fake client" to query Redis from Lua */
@@ -1587,6 +1616,7 @@ void moduleBlockedClientTimedOut(client *c);
 void moduleBlockedClientPipeReadable(aeEventLoop *el, int fd, void *privdata, int mask);
 size_t moduleCount(void);
 void moduleAcquireGIL(void);
+int moduleTryAcquireGIL(void);
 void moduleReleaseGIL(void);
 void moduleNotifyKeyspaceEvent(int type, const char *event, robj *key, int dbid);
 void moduleCallCommandFilters(client *c);
@@ -1647,6 +1677,8 @@ void addReplyBulkLongLong(client *c, long long ll);
 void addReply(client *c, robj *obj);
 void addReplySds(client *c, sds s);
 void addReplyBulkSds(client *c, sds s);
+void addReplyErrorObject(client *c, robj *err);
+void addReplyErrorSds(client *c, sds err);
 void addReplyError(client *c, const char *err);
 void addReplyStatus(client *c, const char *status);
 void addReplyDouble(client *c, double d);
@@ -1745,6 +1777,7 @@ void touchWatchedKey(redisDb *db, robj *key);
 void touchWatchedKeysOnFlush(int dbid);
 void discardTransaction(client *c);
 void flagTransaction(client *c);
+void execCommandAbort(client *c, sds error);
 void execCommandPropagateMulti(client *c);
 void execCommandPropagateExec(client *c);
 
@@ -1991,7 +2024,7 @@ void forceCommandPropagation(client *c, int flags);
 void preventCommandPropagation(client *c);
 void preventCommandAOF(client *c);
 void preventCommandReplication(client *c);
-int prepareForShutdown();
+int prepareForShutdown(int flags);
 #ifdef __GNUC__
 void serverLog(int level, const char *fmt, ...)
     __attribute__((format(printf, 2, 3)));
@@ -2016,6 +2049,7 @@ const char *evictPolicyToString(void);
 struct redisMemOverhead *getMemoryOverheadData(void);
 void freeMemoryOverheadData(struct redisMemOverhead *mh);
 void checkChildrenDone(void);
+int setOOMScoreAdj(int process_class);
 
 #define RESTART_SERVER_NONE 0
 #define RESTART_SERVER_GRACEFULLY (1<<0)     /* Do proper shutdown. */
@@ -2079,7 +2113,7 @@ void appendServerSaveParams(time_t seconds, int changes);
 void resetServerSaveParams(void);
 struct rewriteConfigState; /* Forward declaration to export API. */
 void rewriteConfigRewriteLine(struct rewriteConfigState *state, const char *option, sds line, int force);
-int rewriteConfig(char *path);
+int rewriteConfig(char *path, int force_all);
 void initConfigValues();
 
 /* db.c -- Keyspace access API */
@@ -2088,6 +2122,7 @@ void propagateExpire(redisDb *db, robj *key, int lazy);
 int expireIfNeeded(redisDb *db, robj *key);
 long long getExpire(redisDb *db, robj *key);
 void setExpire(client *c, redisDb *db, robj *key, long long when);
+int checkAlreadyExpired(long long when);
 robj *lookupKey(redisDb *db, robj *key, int flags);
 robj *lookupKeyRead(redisDb *db, robj *key);
 robj *lookupKeyWrite(redisDb *db, robj *key);
@@ -2296,6 +2331,7 @@ void flushdbCommand(client *c);
 void flushallCommand(client *c);
 void sortCommand(client *c);
 void lremCommand(client *c);
+void lposCommand(client *c);
 void rpoplpushCommand(client *c);
 void infoCommand(client *c);
 void mgetCommand(client *c);

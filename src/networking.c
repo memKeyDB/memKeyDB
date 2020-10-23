@@ -29,6 +29,7 @@
 
 #include "server.h"
 #include "atomicvar.h"
+#include "cluster.h"
 #include <sys/socket.h>
 #include <sys/uio.h>
 #include <math.h>
@@ -356,14 +357,18 @@ void addReplyProto(client *c, const char *s, size_t len) {
  *
  * If the error code is already passed in the string 's', the error
  * code provided is used, otherwise the string "-ERR " for the generic
- * error code is automatically added. */
+ * error code is automatically added.
+ * Note that 's' must NOT end with \r\n. */
 void addReplyErrorLength(client *c, const char *s, size_t len) {
     /* If the string already starts with "-..." then the error code
      * is provided by the caller. Otherwise we use "-ERR". */
     if (!len || s[0] != '-') addReplyProto(c,"-ERR ",5);
     addReplyProto(c,s,len);
     addReplyProto(c,"\r\n",2);
+}
 
+/* Do some actions after an error reply was sent (Log if needed, updates stats, etc.) */
+void afterErrorReply(client *c, const char *s, size_t len) {
     /* Sometimes it could be normal that a slave replies to a master with
      * an error and this function gets called. Actually the error will never
      * be sent because addReply*() against master clients has no effect...
@@ -389,10 +394,11 @@ void addReplyErrorLength(client *c, const char *s, size_t len) {
             from = "master";
         }
 
+        if (len > 4096) len = 4096;
         char *cmdname = c->lastcmd ? c->lastcmd->name : "<unknown>";
         serverLog(LL_WARNING,"== CRITICAL == This %s is sending an error "
-                             "to its %s: '%s' after processing the command "
-                             "'%s'", from, to, s, cmdname);
+                             "to its %s: '%.*s' after processing the command "
+                             "'%s'", from, to, (int)len, s, cmdname);
         if (ctype == CLIENT_TYPE_MASTER && server.repl_backlog &&
             server.repl_backlog_histlen > 0)
         {
@@ -402,23 +408,39 @@ void addReplyErrorLength(client *c, const char *s, size_t len) {
     }
 }
 
-void addReplyError(client *c, const char *err) {
-    addReplyErrorLength(c,err,strlen(err));
+/* The 'err' object is expected to start with -ERRORCODE and end with \r\n.
+ * Unlike addReplyErrorSds and others alike which rely on addReplyErrorLength. */
+void addReplyErrorObject(client *c, robj *err) {
+    addReply(c, err);
+    afterErrorReply(c, err->ptr, sdslen(err->ptr)-2); /* Ignore trailing \r\n */
 }
 
+/* See addReplyErrorLength for expectations from the input string. */
+void addReplyError(client *c, const char *err) {
+    addReplyErrorLength(c,err,strlen(err));
+    afterErrorReply(c,err,strlen(err));
+}
+
+/* See addReplyErrorLength for expectations from the input string. */
+void addReplyErrorSds(client *c, sds err) {
+    addReplyErrorLength(c,err,sdslen(err));
+    afterErrorReply(c,err,sdslen(err));
+}
+
+/* See addReplyErrorLength for expectations from the formatted string.
+ * The formatted string is safe to contain \r and \n anywhere. */
 void addReplyErrorFormat(client *c, const char *fmt, ...) {
-    size_t l, j;
     va_list ap;
     va_start(ap,fmt);
     sds s = sdscatvprintf(sdsempty(),fmt,ap);
     va_end(ap);
-    /* Make sure there are no newlines in the string, otherwise invalid protocol
-     * is emitted. */
-    l = sdslen(s);
-    for (j = 0; j < l; j++) {
-        if (s[j] == '\r' || s[j] == '\n') s[j] = ' ';
-    }
+    /* Trim any newlines at the end (ones will be added by addReplyErrorLength) */
+    s = sdstrim(s, "\r\n");
+    /* Make sure there are no newlines in the middle of the string, otherwise
+     * invalid protocol is emitted. */
+    s = sdsmapchars(s, "\r\n", "  ",  2);
     addReplyErrorLength(c,s,sdslen(s));
+    afterErrorReply(c,s,sdslen(s));
     sdsfree(s);
 }
 
@@ -483,6 +505,7 @@ void *addReplyDeferredLen(client *c) {
 
 /* Populate the length object and try gluing it to the next chunk. */
 void setDeferredAggregateLen(client *c, void *node, long length, char prefix) {
+    serverAssert(length >= 0);
     listNode *ln = (listNode*)node;
     clientReplyBlock *next;
     char lenstr[128];
@@ -890,19 +913,36 @@ void clientAcceptHandler(connection *conn) {
 #define MAX_ACCEPTS_PER_CALL 1000
 static void acceptCommonHandler(connection *conn, int flags, char *ip) {
     client *c;
+    char conninfo[100];
     UNUSED(ip);
 
-    /* Admission control will happen before a client is created and connAccept()
+    if (connGetState(conn) != CONN_STATE_ACCEPTING) {
+        serverLog(LL_VERBOSE,
+            "Accepted client connection in error state: %s (conn: %s)",
+            connGetLastError(conn),
+            connGetInfo(conn, conninfo, sizeof(conninfo)));
+        connClose(conn);
+        return;
+    }
+
+    /* Limit the number of connections we take at the same time.
+     *
+     * Admission control will happen before a client is created and connAccept()
      * called, because we don't want to even start transport-level negotiation
-     * if rejected.
-     */
-    if (listLength(server.clients) >= server.maxclients) {
-        char *err = "-ERR max number of clients reached\r\n";
+     * if rejected. */
+    if (listLength(server.clients) + getClusterConnectionsCount()
+        >= server.maxclients)
+    {
+        char *err;
+        if (server.cluster_enabled)
+            err = "-ERR max number of clients + cluster "
+                  "connections reached\r\n";
+        else
+            err = "-ERR max number of clients reached\r\n";
 
         /* That's a best effort error message, don't check write errors.
-         * Note that for TLS connections, no handshake was done yet so nothing is written
-         * and the connection will just drop.
-         */
+         * Note that for TLS connections, no handshake was done yet so nothing
+         * is written and the connection will just drop. */
         if (connWrite(conn,err,strlen(err)) == -1) {
             /* Nothing to do, Just to avoid the warning... */
         }
@@ -913,7 +953,6 @@ static void acceptCommonHandler(connection *conn, int flags, char *ip) {
 
     /* Create connection and client */
     if ((c = createClient(conn)) == NULL) {
-        char conninfo[100];
         serverLog(LL_WARNING,
             "Error registering fd event for the new client: %s (conn: %s)",
             connGetLastError(conn),
@@ -1274,6 +1313,9 @@ client *lookupClientByID(uint64_t id) {
  * set to 0. So when handler_installed is set to 0 the function must be
  * thread safe. */
 int writeToClient(client *c, int handler_installed) {
+    /* Update total number of writes on server */
+    server.stat_total_writes_processed++;
+
     ssize_t nwritten = 0, totwritten = 0;
     size_t objlen;
     clientReplyBlock *o;
@@ -1670,7 +1712,8 @@ int processMultibulkBuffer(client *c) {
             }
 
             ok = string2ll(c->querybuf+c->qb_pos+1,newline-(c->querybuf+c->qb_pos+1),&ll);
-            if (!ok || ll < 0 || ll > server.proto_max_bulk_len) {
+            if (!ok || ll < 0 ||
+                (!(c->flags & CLIENT_MASTER) && ll > server.proto_max_bulk_len)) {
                 addReplyError(c,"Protocol error: invalid bulk length");
                 setProtocolError("invalid bulk length",c);
                 return C_ERR;
@@ -1888,6 +1931,9 @@ void readQueryFromClient(connection *conn) {
     /* Check if we want to read from the client later when exiting from
      * the event loop. This is the case if threaded I/O is enabled. */
     if (postponeClientRead(c)) return;
+
+    /* Update total number of reads on server */
+    server.stat_total_reads_processed++;
 
     readlen = PROTO_IOBUF_LEN;
     /* If this is a multi bulk request, and we are processing a bulk reply
@@ -2135,6 +2181,7 @@ void clientCommand(client *c) {
 "SETNAME <name>         -- Assign the name <name> to the current connection.",
 "UNBLOCK <clientid> [TIMEOUT|ERROR] -- Unblock the specified blocked client.",
 "TRACKING (on|off) [REDIRECT <id>] [BCAST] [PREFIX first] [PREFIX second] [OPTIN] [OPTOUT]... -- Enable client keys tracking for client side caching.",
+"CACHING  (yes|no)      -- Enable/Disable tracking of the keys for next command in OPTIN/OPTOUT mode.",
 "GETREDIR               -- Return the client ID we are redirecting to when tracking is enabled.",
 NULL
         };
@@ -2885,7 +2932,6 @@ int tio_debug = 0;
 pthread_t io_threads[IO_THREADS_MAX_NUM];
 pthread_mutex_t io_threads_mutex[IO_THREADS_MAX_NUM];
 _Atomic unsigned long io_threads_pending[IO_THREADS_MAX_NUM];
-int io_threads_active;  /* Are the threads currently spinning waiting I/O? */
 int io_threads_op;      /* IO_THREADS_OP_WRITE or IO_THREADS_OP_READ. */
 
 /* This is the list of clients each thread will serve when threaded I/O is
@@ -2944,7 +2990,7 @@ void *IOThreadMain(void *myid) {
 
 /* Initialize the data structures needed for threaded I/O. */
 void initThreadedIO(void) {
-    io_threads_active = 0; /* We start with threads not active. */
+    server.io_threads_active = 0; /* We start with threads not active. */
 
     /* Don't spawn any thread if the user selected a single thread:
      * we'll handle I/O directly from the main thread. */
@@ -2978,10 +3024,10 @@ void initThreadedIO(void) {
 void startThreadedIO(void) {
     if (tio_debug) { printf("S"); fflush(stdout); }
     if (tio_debug) printf("--- STARTING THREADED IO ---\n");
-    serverAssert(io_threads_active == 0);
+    serverAssert(server.io_threads_active == 0);
     for (int j = 1; j < server.io_threads_num; j++)
         pthread_mutex_unlock(&io_threads_mutex[j]);
-    io_threads_active = 1;
+    server.io_threads_active = 1;
 }
 
 void stopThreadedIO(void) {
@@ -2992,10 +3038,10 @@ void stopThreadedIO(void) {
     if (tio_debug) printf("--- STOPPING THREADED IO [R%d] [W%d] ---\n",
         (int) listLength(server.clients_pending_read),
         (int) listLength(server.clients_pending_write));
-    serverAssert(io_threads_active == 1);
+    serverAssert(server.io_threads_active == 1);
     for (int j = 1; j < server.io_threads_num; j++)
         pthread_mutex_lock(&io_threads_mutex[j]);
-    io_threads_active = 0;
+    server.io_threads_active = 0;
 }
 
 /* This function checks if there are not enough pending clients to justify
@@ -3014,7 +3060,7 @@ int stopThreadedIOIfNeeded(void) {
     if (server.io_threads_num == 1) return 1;
 
     if (pending < (server.io_threads_num*2)) {
-        if (io_threads_active) stopThreadedIO();
+        if (server.io_threads_active) stopThreadedIO();
         return 1;
     } else {
         return 0;
@@ -3032,7 +3078,7 @@ int handleClientsWithPendingWritesUsingThreads(void) {
     }
 
     /* Start threads if needed. */
-    if (!io_threads_active) startThreadedIO();
+    if (!server.io_threads_active) startThreadedIO();
 
     if (tio_debug) printf("%d TOTAL WRITE pending clients\n", processed);
 
@@ -3089,6 +3135,10 @@ int handleClientsWithPendingWritesUsingThreads(void) {
         }
     }
     listEmptyDRAM(server.clients_pending_write);
+
+    /* Update processed count on server */
+    server.stat_io_writes_processed += processed;
+
     return processed;
 }
 
@@ -3097,7 +3147,7 @@ int handleClientsWithPendingWritesUsingThreads(void) {
  * As a side effect of calling this function the client is put in the
  * pending read clients and flagged as such. */
 int postponeClientRead(client *c) {
-    if (io_threads_active &&
+    if (server.io_threads_active &&
         server.io_threads_do_reads &&
         !ProcessingEventsWhileBlocked &&
         !(c->flags & (CLIENT_MASTER|CLIENT_SLAVE|CLIENT_PENDING_READ)))
@@ -3117,7 +3167,7 @@ int postponeClientRead(client *c) {
  * the reads in the buffers, and also parse the first command available
  * rendering it in the client structures. */
 int handleClientsWithPendingReadsUsingThreads(void) {
-    if (!io_threads_active || !server.io_threads_do_reads) return 0;
+    if (!server.io_threads_active || !server.io_threads_do_reads) return 0;
     int processed = listLength(server.clients_pending_read);
     if (processed == 0) return 0;
 
@@ -3178,5 +3228,9 @@ int handleClientsWithPendingReadsUsingThreads(void) {
         }
         processInputBuffer(c);
     }
+
+    /* Update processed count on server */
+    server.stat_io_reads_processed += processed;
+
     return processed;
 }

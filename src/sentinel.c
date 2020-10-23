@@ -1076,6 +1076,7 @@ int sentinelTryConnectionSharing(sentinelRedisInstance *ri) {
         releaseInstanceLink(ri->link,NULL);
         ri->link = match->link;
         match->link->refcount++;
+        dictReleaseIterator(di);
         return C_OK;
     }
     dictReleaseIterator(di);
@@ -1953,7 +1954,7 @@ void sentinelFlushConfig(void) {
     int rewrite_status;
 
     server.hz = CONFIG_DEFAULT_HZ;
-    rewrite_status = rewriteConfig(server.configfile);
+    rewrite_status = rewriteConfig(server.configfile, 0);
     server.hz = saved_hz;
 
     if (rewrite_status == -1) goto werr;
@@ -2217,8 +2218,8 @@ void sentinelRefreshInstanceInfo(sentinelRedisInstance *ri, const char *info) {
         }
 
         /* role:<role> */
-        if (!memcmp(l,"role:master",11)) role = SRI_MASTER;
-        else if (!memcmp(l,"role:slave",10)) role = SRI_SLAVE;
+        if (sdslen(l) >= 11 && !memcmp(l,"role:master",11)) role = SRI_MASTER;
+        else if (sdslen(l) >= 10 && !memcmp(l,"role:slave",10)) role = SRI_SLAVE;
 
         if (role == SRI_SLAVE) {
             /* master_host:<host> */

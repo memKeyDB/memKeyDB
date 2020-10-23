@@ -609,6 +609,8 @@ void moduleHandlePropagationAfterCommandCallback(RedisModuleCtx *ctx) {
         redisOpArrayFree(&server.also_propagate);
         /* Restore the previous oparray in case of nexted use of the API. */
         server.also_propagate = ctx->saved_oparray;
+        /* We're done with saved_oparray, let's invalidate it. */
+        redisOpArrayInit(&ctx->saved_oparray);
     }
 }
 
@@ -1136,6 +1138,65 @@ void RM_RetainString(RedisModuleCtx *ctx, RedisModuleString *str) {
          * like RedisModule_StringAppendBuffer() to work. */
         incrRefCount(str);
     }
+}
+
+/**
+* This function can be used instead of RedisModule_RetainString().
+* The main difference between the two is that this function will always
+* succeed, whereas RedisModule_RetainString() may fail because of an
+* assertion.
+* 
+* The function returns a pointer to RedisModuleString, which is owned
+* by the caller. It requires a call to RedisModule_FreeString() to free
+* the string when automatic memory management is disabled for the context.
+* When automatic memory management is enabled, you can either call
+* RedisModule_FreeString() or let the automation free it.
+* 
+* This function is more efficient than RedisModule_CreateStringFromString()
+* because whenever possible, it avoids copying the underlying
+* RedisModuleString. The disadvantage of using this function is that it
+* might not be possible to use RedisModule_StringAppendBuffer() on the
+* returned RedisModuleString.
+* 
+* It is possible to call this function with a NULL context.
+ */
+RedisModuleString* RM_HoldString(RedisModuleCtx *ctx, RedisModuleString *str) {
+    if (str->refcount == OBJ_STATIC_REFCOUNT) {
+        return RM_CreateStringFromString(ctx, str);
+    }
+
+    incrRefCount(str);
+    if (ctx != NULL) {
+        /*
+         * Put the str in the auto memory management of the ctx.
+         * It might already be there, in this case, the ref count will
+         * be 2 and we will decrease the ref count twice and free the
+         * object in the auto memory free function.
+         *
+         * Why we can not do the same trick of just remove the object
+         * from the auto memory (like in RM_RetainString)?
+         * This code shows the issue:
+         *
+         * RM_AutoMemory(ctx);
+         * str1 = RM_CreateString(ctx, "test", 4);
+         * str2 = RM_HoldString(ctx, str1);
+         * RM_FreeString(str1);
+         * RM_FreeString(str2);
+         *
+         * If after the RM_HoldString we would just remove the string from
+         * the auto memory, this example will cause access to a freed memory
+         * on 'RM_FreeString(str2);' because the String will be free
+         * on 'RM_FreeString(str1);'.
+         *
+         * So it's safer to just increase the ref count
+         * and add the String to auto memory again.
+         *
+         * The limitation is that it is not possible to use RedisModule_StringAppendBuffer
+         * on the String.
+         */
+        autoMemoryAdd(ctx,REDISMODULE_AM_STRING,str);
+    }
+    return str;
 }
 
 /* Given a string module object, this function returns the string pointer
@@ -1694,6 +1755,8 @@ int modulePopulateClientInfoStructure(void *ci, client *client, int structver) {
         ci1->flags |= REDISMODULE_CLIENTINFO_FLAG_TRACKING;
     if (client->flags & CLIENT_BLOCKED)
         ci1->flags |= REDISMODULE_CLIENTINFO_FLAG_BLOCKED;
+    if (connGetType(client->conn) == CONN_TYPE_TLS)
+        ci1->flags |= REDISMODULE_CLIENTINFO_FLAG_SSL;
 
     int port;
     connPeerToString(client->conn,ci1->addr,sizeof(ci1->addr),&port);
@@ -2044,7 +2107,7 @@ int RM_KeyType(RedisModuleKey *key) {
     case OBJ_HASH: return REDISMODULE_KEYTYPE_HASH;
     case OBJ_MODULE: return REDISMODULE_KEYTYPE_MODULE;
     case OBJ_STREAM: return REDISMODULE_KEYTYPE_STREAM;
-    default: return 0;
+    default: return REDISMODULE_KEYTYPE_EMPTY;
     }
 }
 
@@ -2098,7 +2161,8 @@ int RM_UnlinkKey(RedisModuleKey *key) {
  * REDISMODULE_NO_EXPIRE is returned. */
 mstime_t RM_GetExpire(RedisModuleKey *key) {
     mstime_t expire = getExpire(key->db,key->key);
-    if (expire == -1 || key->value == NULL) return -1;
+    if (expire == -1 || key->value == NULL) 
+        return REDISMODULE_NO_EXPIRE;
     expire -= mstime();
     return expire >= 0 ? expire : 0;
 }
@@ -3189,8 +3253,11 @@ robj **moduleCreateArgvFromUserFormat(const char *cmdname, const char *fmt, int 
             argv[argc++] = createStringObject(cstr,strlen(cstr));
         } else if (*p == 's') {
             robj *obj = va_arg(ap,void*);
+            if (obj->refcount == OBJ_STATIC_REFCOUNT)
+                obj = createStringObject(obj->ptr,sdslen(obj->ptr));
+            else
+                incrRefCount(obj);
             argv[argc++] = obj;
-            incrRefCount(obj);
         } else if (*p == 'b') {
             char *buf = va_arg(ap,char*);
             size_t len = va_arg(ap,size_t);
@@ -3236,6 +3303,23 @@ fmterr:
 }
 
 /* Exported API to call any Redis command from modules.
+ *
+ * * **cmdname**: The Redis command to call.
+ * * **fmt**: A format specifier string for the command's arguments. Each
+ *   of the arguments should be specified by a valid type specification:
+ *   b    The argument is a buffer and is immediately followed by another
+ *        argument that is the buffer's length.
+ *   c    The argument is a pointer to a plain C string (null-terminated).
+ *   l    The argument is long long integer.
+ *   s    The argument is a RedisModuleString.
+ *   v    The argument(s) is a vector of RedisModuleString.
+ *
+ *   The format specifier can also include modifiers:
+ *   !    Sends the Redis command and its arguments to replicas and AOF.
+ *   A    Suppress AOF propagation, send only to replicas (requires `!`).
+ *   R    Suppress replicas propagation, send only to AOF (requires `!`).
+ * * **...**: The actual arguments to the Redis command.
+ *
  * On success a RedisModuleCallReply object is returned, otherwise
  * NULL is returned and errno is set to the following values:
  *
@@ -3246,6 +3330,14 @@ fmterr:
  * EROFS:  operation in Cluster instance when a write command is sent
  *         in a readonly state.
  * ENETDOWN: operation in Cluster instance when cluster is down.
+ *
+ * Example code fragment:
+ * 
+ *      reply = RedisModule_Call(ctx,"INCRBY","sc",argv[1],"10");
+ *      if (RedisModule_CallReplyType(reply) == REDISMODULE_REPLY_INTEGER) {
+ *        long long myval = RedisModule_CallReplyInteger(reply);
+ *        // Do something with myval.
+ *      }
  *
  * This API is documented here: https://redis.io/topics/modules-intro
  */
@@ -4344,6 +4436,7 @@ void unblockClientFromModule(client *c) {
  * Even when blocking on keys, RM_UnblockClient() can be called however, but
  * in that case the privdata argument is disregarded, because we pass the
  * reply callback the privdata that is set here while blocking.
+ *
  */
 RedisModuleBlockedClient *moduleBlockClient(RedisModuleCtx *ctx, RedisModuleCmdFunc reply_callback, RedisModuleCmdFunc timeout_callback, void (*free_privdata)(RedisModuleCtx*,void*), long long timeout_ms, RedisModuleString **keys, int numkeys, void *privdata) {
     client *c = ctx->client;
@@ -4436,6 +4529,14 @@ int moduleTryServeClientBlockedOnKey(client *c, robj *key) {
  * Note: RedisModule_UnblockClient should be called for every blocked client,
  *       even if client was killed, timed-out or disconnected. Failing to do so
  *       will result in memory leaks.
+ *
+ * There are some cases where RedisModule_BlockClient() cannot be used:
+ *
+ * 1. If the client is a Lua script.
+ * 2. If the client is executing a MULTI block.
+ *
+ * In these cases, a call to RedisModule_BlockClient() will **not** block the
+ * client, but instead produce a specific error reply.
  */
 RedisModuleBlockedClient *RM_BlockClient(RedisModuleCtx *ctx, RedisModuleCmdFunc reply_callback, RedisModuleCmdFunc timeout_callback, void (*free_privdata)(RedisModuleCtx*,void*), long long timeout_ms) {
     return moduleBlockClient(ctx,reply_callback,timeout_callback,free_privdata,timeout_ms, NULL,0,NULL);
@@ -4805,6 +4906,23 @@ void RM_ThreadSafeContextLock(RedisModuleCtx *ctx) {
     moduleAcquireGIL();
 }
 
+/* Similar to RM_ThreadSafeContextLock but this function
+ * would not block if the server lock is already acquired.
+ *
+ * If successful (lock acquired) REDISMODULE_OK is returned,
+ * otherwise REDISMODULE_ERR is returned and errno is set
+ * accordingly. */
+int RM_ThreadSafeContextTryLock(RedisModuleCtx *ctx) {
+    UNUSED(ctx);
+
+    int res = moduleTryAcquireGIL();
+    if(res != 0) {
+        errno = res;
+        return REDISMODULE_ERR;
+    }
+    return REDISMODULE_OK;
+}
+
 /* Release the server lock after a thread safe API call was executed. */
 void RM_ThreadSafeContextUnlock(RedisModuleCtx *ctx) {
     UNUSED(ctx);
@@ -4813,6 +4931,10 @@ void RM_ThreadSafeContextUnlock(RedisModuleCtx *ctx) {
 
 void moduleAcquireGIL(void) {
     pthread_mutex_lock(&moduleGIL);
+}
+
+int moduleTryAcquireGIL(void) {
+    return pthread_mutex_trylock(&moduleGIL);
 }
 
 void moduleReleaseGIL(void) {
@@ -4847,6 +4969,11 @@ void moduleReleaseGIL(void) {
  *  - REDISMODULE_NOTIFY_STREAM: Stream events
  *  - REDISMODULE_NOTIFY_KEYMISS: Key-miss events
  *  - REDISMODULE_NOTIFY_ALL: All events (Excluding REDISMODULE_NOTIFY_KEYMISS)
+ *  - REDISMODULE_NOTIFY_LOADED: A special notification available only for modules,
+ *                               indicates that the key was loaded from persistence.
+ *                               Notice, when this event fires, the given key
+ *                               can not be retained, use RM_CreateStringFromString
+ *                               instead.
  *
  * We do not distinguish between key events and keyspace events, and it is up
  * to the module to filter the actions taken based on the key.
@@ -6708,7 +6835,7 @@ int RM_ScanKey(RedisModuleKey *key, RedisModuleScanCursor *cursor, RedisModuleSc
         int pos = 0;
         int64_t ll;
         while(intsetGet(o->ptr,pos++,&ll)) {
-            robj *field = createStringObjectFromLongLong(ll);
+            robj *field = createObject(OBJ_STRING,sdsfromlonglong(ll));
             fn(key, field, NULL, privdata);
             decrRefCount(field);
         }
@@ -6724,12 +6851,12 @@ int RM_ScanKey(RedisModuleKey *key, RedisModuleScanCursor *cursor, RedisModuleSc
             ziplistGet(p,&vstr,&vlen,&vll);
             robj *field = (vstr != NULL) ?
                 createStringObject((char*)vstr,vlen) :
-                createStringObjectFromLongLong(vll);
+                createObject(OBJ_STRING,sdsfromlonglong(vll));
             p = ziplistNext(o->ptr,p);
             ziplistGet(p,&vstr,&vlen,&vll);
             robj *value = (vstr != NULL) ?
                 createStringObject((char*)vstr,vlen) :
-                createStringObjectFromLongLong(vll);
+                createObject(OBJ_STRING,sdsfromlonglong(vll));
             fn(key, field, value, privdata);
             p = ziplistNext(o->ptr,p);
             decrRefCount(field);
@@ -7183,8 +7310,8 @@ void processModuleLoadingProgressEvent(int is_aof) {
         /* Fire the loading progress modules end event. */
         int progress = -1;
         if (server.loading_total_bytes)
-            progress = (server.loading_total_bytes<<10) / server.loading_total_bytes;
-        RedisModuleFlushInfoV1 fi = {REDISMODULE_LOADING_PROGRESS_VERSION,
+            progress = (server.loading_loaded_bytes<<10) / server.loading_total_bytes;
+        RedisModuleLoadingProgressV1 fi = {REDISMODULE_LOADING_PROGRESS_VERSION,
                                      server.hz,
                                      progress};
         moduleFireServerEvent(REDISMODULE_EVENT_LOADING_PROGRESS,
@@ -7808,6 +7935,7 @@ void moduleRegisterCoreAPI(void) {
     REGISTER_API(LatencyAddSample);
     REGISTER_API(StringAppendBuffer);
     REGISTER_API(RetainString);
+    REGISTER_API(HoldString);
     REGISTER_API(StringCompare);
     REGISTER_API(GetContextFromIO);
     REGISTER_API(GetKeyNameFromIO);
@@ -7822,6 +7950,7 @@ void moduleRegisterCoreAPI(void) {
     REGISTER_API(GetThreadSafeContext);
     REGISTER_API(FreeThreadSafeContext);
     REGISTER_API(ThreadSafeContextLock);
+    REGISTER_API(ThreadSafeContextTryLock);
     REGISTER_API(ThreadSafeContextUnlock);
     REGISTER_API(DigestAddStringBuffer);
     REGISTER_API(DigestAddLongLong);

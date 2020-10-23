@@ -23,6 +23,20 @@ It is as simple as:
 
     % make
 
+To build with TLS support, you'll need OpenSSL development libraries (e.g.
+libssl-dev on Debian/Ubuntu) and run:
+
+    % make BUILD_TLS=yes
+
+To build with systemd support, you'll need systemd development libraries (such 
+as libsystemd-dev on Debian/Ubuntu or systemd-devel on CentOS) and run:
+
+    % make USE_SYSTEMD=yes
+
+You can run a 32 bit Redis binary using:
+
+    % make 32bit
+
 After building MemKeyDB, it is a good idea to test it using:
 
     % make test

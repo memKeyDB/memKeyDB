@@ -106,12 +106,21 @@ configEnum repl_diskless_load_enum[] = {
     {NULL, 0}
 };
 
+configEnum tls_auth_clients_enum[] = {
+    {"no", TLS_CLIENT_AUTH_NO},
+    {"yes", TLS_CLIENT_AUTH_YES},
+    {"optional", TLS_CLIENT_AUTH_OPTIONAL},
+    {NULL, 0}
+};
 /* Output buffer limits presets. */
 clientBufferLimitsConfig clientBufferLimitsDefaults[CLIENT_TYPE_OBUF_COUNT] = {
     {0, 0, 0}, /* normal */
     {1024*1024*256, 1024*1024*64, 60}, /* slave */
     {1024*1024*32, 1024*1024*8, 60}  /* pubsub */
 };
+
+/* OOM Score defaults */
+int configOOMScoreAdjValuesDefaults[CONFIG_OOM_COUNT] = { 0, 200, 800 };
 
 /* Generic config infrastructure function pointers
  * int is_valid_fn(val, err)
@@ -286,6 +295,59 @@ void queueLoadModule(sds path, sds *argv, int argc) {
         loadmod->argv[i] = createRawStringObject(argv[i],sdslen(argv[i]));
     }
     listAddNodeTail(server.loadmodule_queue,loadmod);
+}
+
+/* Parse an array of CONFIG_OOM_COUNT sds strings, validate and populate
+ * server.oom_score_adj_values if valid.
+ */
+
+static int updateOOMScoreAdjValues(sds *args, char **err) {
+    int i;
+    int values[CONFIG_OOM_COUNT];
+
+    for (i = 0; i < CONFIG_OOM_COUNT; i++) {
+        char *eptr;
+        long long val = strtoll(args[i], &eptr, 10);
+
+        if (*eptr != '\0' || val < -1000 || val > 1000) {
+            if (err) *err = "Invalid oom-score-adj-values, elements must be between -1000 and 1000.";
+            return C_ERR;
+        }
+
+        values[i] = val;
+    }
+
+    /* Verify that the values make sense. If they don't omit a warning but
+     * keep the configuration, which may still be valid for privileged processes.
+     */
+
+    if (values[CONFIG_OOM_REPLICA] < values[CONFIG_OOM_MASTER] ||
+        values[CONFIG_OOM_BGCHILD] < values[CONFIG_OOM_REPLICA]) {
+            serverLog(LOG_WARNING,
+                    "The oom-score-adj-values configuration may not work for non-privileged processes! "
+                    "Please consult the documentation.");
+    }
+
+    /* Store values, retain previous config for rollback in case we fail. */
+    int old_values[CONFIG_OOM_COUNT];
+    for (i = 0; i < CONFIG_OOM_COUNT; i++) {
+        old_values[i] = server.oom_score_adj_values[i];
+        server.oom_score_adj_values[i] = values[i];
+    }
+
+    /* Update */
+    if (setOOMScoreAdj(-1) == C_ERR) {
+        /* Roll back */
+        for (i = 0; i < CONFIG_OOM_COUNT; i++)
+            server.oom_score_adj_values[i] = old_values[i];
+
+        if (err)
+            *err = "Failed to apply oom-score-adj-values configuration, check server logs.";
+
+        return C_ERR;
+    }
+
+    return C_OK;
 }
 
 void initConfigValues() {
@@ -490,6 +552,8 @@ void loadServerConfigFromString(char *config) {
             server.client_obuf_limits[class].hard_limit_bytes = hard;
             server.client_obuf_limits[class].soft_limit_bytes = soft;
             server.client_obuf_limits[class].soft_limit_seconds = soft_seconds;
+        } else if (!strcasecmp(argv[0],"oom-score-adj-values") && argc == 1 + CONFIG_OOM_COUNT) {
+            if (updateOOMScoreAdjValues(&argv[1], &err) == C_ERR) goto loaderr;
         } else if (!strcasecmp(argv[0],"notify-keyspace-events") && argc == 2) {
             int flags = keyspaceEventsStringToFlags(argv[1]);
 
@@ -582,7 +646,8 @@ void loadServerConfig(char *filename, char *options) {
         } else {
             if ((fp = fopen(filename,"r")) == NULL) {
                 serverLog(LL_WARNING,
-                    "Fatal error, can't open config file '%s'", filename);
+                    "Fatal error, can't open config file '%s': %s",
+                    filename, strerror(errno));
                 exit(1);
             }
         }
@@ -753,6 +818,17 @@ void configSetCommand(client *c) {
             server.client_obuf_limits[class].soft_limit_seconds = soft_seconds;
         }
         sdsfreesplitres(v,vlen);
+    } config_set_special_field("oom-score-adj-values") {
+        int vlen;
+        int success = 1;
+
+        sds *v = sdssplitlen(o->ptr, sdslen(o->ptr), " ", 1, &vlen);
+        if (vlen != CONFIG_OOM_COUNT || updateOOMScoreAdjValues(v, &errstr) == C_ERR)
+            success = 0;
+
+        sdsfreesplitres(v, vlen);
+        if (!success)
+            goto badfmt;
     } config_set_special_field("notify-keyspace-events") {
         int flags = keyspaceEventsStringToFlags(o->ptr);
 
@@ -955,6 +1031,22 @@ void configGetCommand(client *c) {
         matches++;
     }
 
+    if (stringmatch(pattern,"oom-score-adj-values",0)) {
+        sds buf = sdsempty();
+        int j;
+
+        for (j = 0; j < CONFIG_OOM_COUNT; j++) {
+            buf = sdscatprintf(buf,"%d", server.oom_score_adj_values[j]);
+            if (j != CONFIG_OOM_COUNT-1)
+                buf = sdscatlen(buf," ",1);
+        }
+
+        addReplyBulkCString(c,"oom-score-adj-values");
+        addReplyBulkCString(c,buf);
+        sdsfree(buf);
+        matches++;
+    }
+
     setDeferredMapLen(c,replylen,matches);
 }
 
@@ -1002,6 +1094,8 @@ struct rewriteConfigState {
     sds *lines;           /* Current lines as an array of sds strings */
     int has_tail;         /* True if we already added directives that were
                              not present in the original config file. */
+    int force_all;        /* True if we want all keywords to be force
+                             written. Currently only used for testing. */
 };
 
 /* Append the new line to the current configuration state. */
@@ -1048,6 +1142,7 @@ struct rewriteConfigState *rewriteConfigReadOldFile(char *path) {
     state->numlines = 0;
     state->lines = NULL;
     state->has_tail = 0;
+    state->force_all = 0;
     if (fp == NULL) return state;
 
     /* Read the old file line by line, populate the state. */
@@ -1126,7 +1221,7 @@ void rewriteConfigRewriteLine(struct rewriteConfigState *state, const char *opti
 
     rewriteConfigMarkAsProcessed(state,option);
 
-    if (!l && !force) {
+    if (!l && !force && !state->force_all) {
         /* Option not used previously, and we are not forced to use it. */
         sdsfree(line);
         sdsfree(o);
@@ -1362,6 +1457,26 @@ void rewriteConfigClientoutputbufferlimitOption(struct rewriteConfigState *state
     }
 }
 
+/* Rewrite the oom-score-adj-values option. */
+void rewriteConfigOOMScoreAdjValuesOption(struct rewriteConfigState *state) {
+    int force = 0;
+    int j;
+    char *option = "oom-score-adj-values";
+    sds line;
+
+    line = sdsnew(option);
+    line = sdscatlen(line, " ", 1);
+    for (j = 0; j < CONFIG_OOM_COUNT; j++) {
+        if (server.oom_score_adj_values[j] != configOOMScoreAdjValuesDefaults[j])
+            force = 1;
+
+        line = sdscatprintf(line, "%d", server.oom_score_adj_values[j]);
+        if (j+1 != CONFIG_OOM_COUNT)
+            line = sdscatlen(line, " ", 1);
+    }
+    rewriteConfigRewriteLine(state,option,line,force);
+}
+
 /* Rewrite the bind option. */
 void rewriteConfigBindOption(struct rewriteConfigState *state) {
     int force = 1;
@@ -1530,15 +1645,18 @@ cleanup:
  *
  * Configuration parameters that are at their default value, unless already
  * explicitly included in the old configuration file, are not rewritten.
+ * The force_all flag overrides this behavior and forces everything to be
+ * written. This is currently only used for testing purposes.
  *
  * On error -1 is returned and errno is set accordingly, otherwise 0. */
-int rewriteConfig(char *path) {
+int rewriteConfig(char *path, int force_all) {
     struct rewriteConfigState *state;
     sds newcontent;
     int retval;
 
     /* Step 1: read the old config into our rewrite state. */
     if ((state = rewriteConfigReadOldFile(path)) == NULL) return -1;
+    if (force_all) state->force_all = 1;
 
     /* Step 2: rewrite every single option, replacing or appending it inside
      * the rewrite state. */
@@ -1560,6 +1678,7 @@ int rewriteConfig(char *path) {
     rewriteConfigStringOption(state,"cluster-config-file",server.cluster_configfile,CONFIG_DEFAULT_CLUSTER_CONFIG_FILE);
     rewriteConfigNotifykeyspaceeventsOption(state);
     rewriteConfigClientoutputbufferlimitOption(state);
+    rewriteConfigOOMScoreAdjValuesOption(state);
 
     /* Rewrite Sentinel config if in Sentinel mode. */
     if (server.sentinel_mode) rewriteConfigSentinelOption(state);
@@ -2114,18 +2233,40 @@ static int updateMaxclients(long long val, long long prev, char **err) {
     return 1;
 }
 
+static int updateOOMScoreAdj(int val, int prev, char **err) {
+    UNUSED(prev);
+
+    if (val) {
+        if (setOOMScoreAdj(-1) == C_ERR) {
+            *err = "Failed to set current oom_score_adj. Check server logs.";
+            return 0;
+        }
+    }
+
+    return 1;
+}
+
 #ifdef USE_OPENSSL
 static int updateTlsCfg(char *val, char *prev, char **err) {
     UNUSED(val);
     UNUSED(prev);
     UNUSED(err);
-    if (tlsConfigure(&server.tls_ctx_config) == C_ERR) {
-        *err = "Unable to configure tls-cert-file. Check server logs.";
+
+    /* If TLS is enabled, try to configure OpenSSL. */
+    if ((server.tls_port || server.tls_replication || server.tls_cluster)
+            && tlsConfigure(&server.tls_ctx_config) == C_ERR) {
+        *err = "Unable to update TLS configuration. Check server logs.";
         return 0;
     }
     return 1;
 }
 static int updateTlsCfgBool(int val, int prev, char **err) {
+    UNUSED(val);
+    UNUSED(prev);
+    return updateTlsCfg(NULL, NULL, err);
+}
+
+static int updateTlsCfgInt(long long val, long long prev, char **err) {
     UNUSED(val);
     UNUSED(prev);
     return updateTlsCfg(NULL, NULL, err);
@@ -2171,6 +2312,7 @@ standardConfig configs[] = {
     createBoolConfig("cluster-allow-reads-when-down", NULL, MODIFIABLE_CONFIG, server.cluster_allow_reads_when_down, 0, NULL, NULL),
     createBoolConfig("hashtable-on-dram", NULL, IMMUTABLE_CONFIG, server.hashtable_on_dram, 1, NULL, NULL),
 
+    createBoolConfig("oom-score-adj", NULL, MODIFIABLE_CONFIG, server.oom_score_adj, 0, NULL, updateOOMScoreAdj),
 
     /* String Configs */
     createStringConfig("aclfile", NULL, IMMUTABLE_CONFIG, ALLOW_EMPTY_STRING, server.acl_filename, "", NULL, NULL),
@@ -2248,7 +2390,7 @@ standardConfig configs[] = {
     createLongLongConfig("cluster-node-timeout", NULL, MODIFIABLE_CONFIG, 0, LLONG_MAX, server.cluster_node_timeout, 15000, INTEGER_CONFIG, NULL, NULL),
     createLongLongConfig("slowlog-log-slower-than", NULL, MODIFIABLE_CONFIG, -1, LLONG_MAX, server.slowlog_log_slower_than, 10000, INTEGER_CONFIG, NULL, NULL),
     createLongLongConfig("latency-monitor-threshold", NULL, MODIFIABLE_CONFIG, 0, LLONG_MAX, server.latency_monitor_threshold, 0, INTEGER_CONFIG, NULL, NULL),
-    createLongLongConfig("proto-max-bulk-len", NULL, MODIFIABLE_CONFIG, 0, LLONG_MAX, server.proto_max_bulk_len, 512ll*1024*1024, MEMORY_CONFIG, NULL, NULL), /* Bulk request max size */
+    createLongLongConfig("proto-max-bulk-len", NULL, MODIFIABLE_CONFIG, 1024*1024, LLONG_MAX, server.proto_max_bulk_len, 512ll*1024*1024, MEMORY_CONFIG, NULL, NULL), /* Bulk request max size */
     createLongLongConfig("stream-node-max-entries", NULL, MODIFIABLE_CONFIG, 0, LLONG_MAX, server.stream_node_max_entries, 100, INTEGER_CONFIG, NULL, NULL),
     createLongLongConfig("repl-backlog-size", NULL, MODIFIABLE_CONFIG, 1, LLONG_MAX, server.repl_backlog_size, 1024*1024, MEMORY_CONFIG, NULL, updateReplBacklogSize), /* Default: 1mb */
 
@@ -2271,11 +2413,14 @@ standardConfig configs[] = {
     createOffTConfig("auto-aof-rewrite-min-size", NULL, MODIFIABLE_CONFIG, 0, LLONG_MAX, server.aof_rewrite_min_size, 64*1024*1024, MEMORY_CONFIG, NULL, NULL),
 
 #ifdef USE_OPENSSL
-    createIntConfig("tls-port", NULL, IMMUTABLE_CONFIG, 0, 65535, server.tls_port, 0, INTEGER_CONFIG, NULL, NULL), /* TCP port. */
-    createBoolConfig("tls-cluster", NULL, MODIFIABLE_CONFIG, server.tls_cluster, 0, NULL, NULL),
-    createBoolConfig("tls-replication", NULL, MODIFIABLE_CONFIG, server.tls_replication, 0, NULL, NULL),
-    createBoolConfig("tls-auth-clients", NULL, MODIFIABLE_CONFIG, server.tls_auth_clients, 1, NULL, NULL),
+    createIntConfig("tls-port", NULL, IMMUTABLE_CONFIG, 0, 65535, server.tls_port, 0, INTEGER_CONFIG, NULL, updateTlsCfgInt), /* TCP port. */
+    createIntConfig("tls-session-cache-size", NULL, MODIFIABLE_CONFIG, 0, INT_MAX, server.tls_ctx_config.session_cache_size, 20*1024, INTEGER_CONFIG, NULL, updateTlsCfgInt),
+    createIntConfig("tls-session-cache-timeout", NULL, MODIFIABLE_CONFIG, 0, INT_MAX, server.tls_ctx_config.session_cache_timeout, 300, INTEGER_CONFIG, NULL, updateTlsCfgInt),
+    createBoolConfig("tls-cluster", NULL, MODIFIABLE_CONFIG, server.tls_cluster, 0, NULL, updateTlsCfgBool),
+    createBoolConfig("tls-replication", NULL, MODIFIABLE_CONFIG, server.tls_replication, 0, NULL, updateTlsCfgBool),
+    createEnumConfig("tls-auth-clients", NULL, MODIFIABLE_CONFIG, tls_auth_clients_enum, server.tls_auth_clients, TLS_CLIENT_AUTH_YES, NULL, NULL),
     createBoolConfig("tls-prefer-server-ciphers", NULL, MODIFIABLE_CONFIG, server.tls_ctx_config.prefer_server_ciphers, 0, NULL, updateTlsCfgBool),
+    createBoolConfig("tls-session-caching", NULL, MODIFIABLE_CONFIG, server.tls_ctx_config.session_caching, 1, NULL, updateTlsCfgBool),
     createStringConfig("tls-cert-file", NULL, MODIFIABLE_CONFIG, EMPTY_STRING_IS_NULL, server.tls_ctx_config.cert_file, NULL, NULL, updateTlsCfg),
     createStringConfig("tls-key-file", NULL, MODIFIABLE_CONFIG, EMPTY_STRING_IS_NULL, server.tls_ctx_config.key_file, NULL, NULL, updateTlsCfg),
     createStringConfig("tls-dh-params-file", NULL, MODIFIABLE_CONFIG, EMPTY_STRING_IS_NULL, server.tls_ctx_config.dh_params_file, NULL, NULL, updateTlsCfg),
@@ -2323,7 +2468,7 @@ NULL
             addReplyError(c,"The server is running without a config file");
             return;
         }
-        if (rewriteConfig(server.configfile) == -1) {
+        if (rewriteConfig(server.configfile, 0) == -1) {
             serverLog(LL_WARNING,"CONFIG REWRITE failed: %s", strerror(errno));
             addReplyErrorFormat(c,"Rewriting config file: %s", strerror(errno));
         } else {
