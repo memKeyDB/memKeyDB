@@ -23,6 +23,24 @@ It is as simple as:
 
     % make
 
+To build with TLS support, you'll need OpenSSL development libraries (e.g.
+libssl-dev on Debian/Ubuntu) and run:
+
+    % make BUILD_TLS=yes
+
+To build with systemd support, you'll need systemd development libraries (such 
+as libsystemd-dev on Debian/Ubuntu or systemd-devel on CentOS) and run:
+
+    % make USE_SYSTEMD=yes
+
+To append a suffix to MemKeyDB program names, use:
+
+    % make PROG_SUFFIX="-alt"
+
+You can run a 32 bit MemKeyDB binary using:
+
+    % make 32bit
+
 After building MemKeyDB, it is a good idea to test it using:
 
     % make test
@@ -108,7 +126,9 @@ You can use `make PREFIX=/some/other/directory install` if you wish to use a
 different destination.
 
 Make install will just install binaries in your system, but will not configure
-init scripts and configuration files in the appropriate place. There is a script doing this
+init scripts and configuration files in the appropriate place. This is not
+needed if you just want to play a bit with MemKeyDB, but if you are installing
+it the proper way for a production system, we have a script that does this
 for Ubuntu and Debian systems:
 
     % cd utils
