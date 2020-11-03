@@ -4233,6 +4233,7 @@ sds genRedisInfoString(const char *section) {
     /* Memory */
     if (allsections || defsections || !strcasecmp(section,"memory")) {
         char hmem[64];
+        char hmem_dram[64];
         char hmem_pmem[64];
         char peak_hmem[64];
         char total_system_hmem[64];
@@ -4241,6 +4242,7 @@ sds genRedisInfoString(const char *section) {
         char used_memory_rss_hmem[64];
         char maxmemory_hmem[64];
         size_t zmalloc_used = zmalloc_used_memory();
+        size_t zmalloc_dram_used = zmalloc_used_dram_memory();        
         size_t zmalloc_pmem_used = zmalloc_used_pmem_memory();
         size_t total_system_mem = server.system_memory_size;
         size_t pmem_threshold = zmalloc_get_threshold();
@@ -4256,6 +4258,7 @@ sds genRedisInfoString(const char *section) {
             server.stat_peak_memory = zmalloc_used;
 
         bytesToHuman(hmem,zmalloc_used);
+        bytesToHuman(hmem_dram,zmalloc_dram_used);
         bytesToHuman(hmem_pmem,zmalloc_pmem_used);
         bytesToHuman(peak_hmem,server.stat_peak_memory);
         bytesToHuman(total_system_hmem,total_system_mem);
@@ -4279,6 +4282,8 @@ sds genRedisInfoString(const char *section) {
             "used_memory_dataset:%zu\r\n"
             "used_memory_dataset_perc:%.2f%%\r\n"
             "pmem_threshold:%zu\r\n"
+            "used_memory_dram:%zu\r\n"
+            "used_memory_dram_human:%s\r\n"
             "used_memory_pmem:%zu\r\n"
             "used_memory_pmem_human:%s\r\n"
             "allocator_allocated:%zu\r\n"
@@ -4322,6 +4327,8 @@ sds genRedisInfoString(const char *section) {
             mh->dataset,
             mh->dataset_perc,
             pmem_threshold,
+            zmalloc_dram_used,
+            hmem_dram,
             zmalloc_pmem_used,
             hmem_pmem,
             server.cron_malloc_stats.allocator_allocated,
