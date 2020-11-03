@@ -94,6 +94,7 @@ void zfree_dram(void *ptr);
 char *zstrdup(const char *s);
 size_t zmalloc_used_memory(void);
 size_t zmalloc_used_pmem_memory(void);
+size_t zmalloc_used_dram_memory(void);
 void zmalloc_set_oom_handler(void (*oom_handler)(size_t));
 size_t zmalloc_get_rss(void);
 int zmalloc_get_allocator_info(size_t *allocated, size_t *active, size_t *resident);

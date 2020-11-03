@@ -70,7 +70,7 @@ void adjustPmemThresholdCycle(void) {
     /* PMEM and DRAM utilization in last checkpoint*/
     static size_t total_memory_checkpoint;
     size_t pmem_memory = zmalloc_used_pmem_memory();
-    size_t dram_memory = zmalloc_used_memory();
+    size_t dram_memory = zmalloc_used_dram_memory();
     size_t total_memory_current = pmem_memory + dram_memory;
     // do not modify threshold when change in memory usage is too small
     if (absDiff(total_memory_checkpoint, total_memory_current) > 100) {

@@ -392,7 +392,17 @@ char *zstrdup(const char *s) {
     return p;
 }
 
-size_t zmalloc_used_memory(void) {
+#ifdef USE_MEMKIND
+    size_t zmalloc_used_memory(void) {
+        return zmalloc_used_dram_memory()+zmalloc_used_pmem_memory();
+    }
+#else
+    size_t zmalloc_used_memory(void) {
+        return zmalloc_used_dram_memory();
+    }
+#endif
+
+size_t zmalloc_used_dram_memory(void) {
     size_t um;
     atomicGet(used_memory,um);
     return um;
