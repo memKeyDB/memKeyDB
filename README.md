@@ -7,7 +7,14 @@ What is MemKeyDB?
 MemKeyDB is a database that fully uses the advantages of DRAM and Intel Optane Persistent Memory. The main concept is to store the bigger size values on the Intel Optane Persistent Memory, configured as System RAM (KMEM DAX), while the smaller allocations are preffered to be kept on DRAM. The ratio of data stored on PMEM and DRAM is selected in regard to obtaining the best performance.
 The data stored on the medium is volatile and the persistency is preserved with RDB/AOF mechanism.
 
-For details please read this [blog entry](https://pmem.io/2020/09/25/memkeydb.html).
+Additional Resources
+--------------
+Visit our website: https://memkeydb.io/
+
+Memkind allocator website: http://memkind.github.io/memkind/
+
+PMDK blog entry about MemKeyDB: [PMDK blog](https://pmem.io/2020/09/25/memkeydb.html)
+
 
 Building MemKeyDB
 --------------
