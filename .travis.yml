@@ -27,6 +27,7 @@ before script:
 script:
   - make gcov
   - ./runtest --clients 1
+  - MEMKIND_DAX_KMEM_NODES=0 ./runtest --pmem-ratio --clients 1
 
 after_success:
   - bash <(curl -s https://codecov.io/bash) -p src
