@@ -17,6 +17,7 @@ source ../support/test.tcl
 
 set ::verbose 0
 set ::valgrind 0
+set ::pmem_ratio_test 0
 set ::tls 0
 set ::pause_on_error 0
 set ::dont_clean 0
@@ -230,6 +231,8 @@ proc parse_options {} {
             set ::simulate_error 1
         } elseif {$opt eq {--valgrind}} {
             set ::valgrind 1
+        } elseif {$opt eq {--pmem-ratio}} {
+            set ::pmem_ratio_test 1
         } elseif {$opt eq {--tls}} {
             package require tls 1.6
             ::tls::init \
@@ -243,6 +246,7 @@ proc parse_options {} {
             puts "--pause-on-error        Pause for manual inspection on error."
             puts "--fail                  Simulate a test failure."
             puts "--valgrind              Run with valgrind."
+            puts "--pmem-ratio            Run the tests with pmem-ratio variant."
             puts "--tls                   Run tests in TLS mode."
             puts "--help                  Shows this help."
             exit 0
