@@ -29,6 +29,7 @@
  */
 
 #include <limits.h>
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
@@ -147,8 +148,61 @@ static void *zrealloc_pmem(void *ptr, size_t size) {
 static size_t pmem_threshold = UINT_MAX;
 static size_t used_memory = 0;
 static size_t used_pmem_memory = 0;
+static double pmem_dram_ratio = 0.0;
+static int use_ratio = 0;
+static unsigned int dynamic_min_threshold = 0;
+static unsigned int dynamic_max_threshold = 0;
+static int zmalloc_counter = 0;
+
 pthread_mutex_t used_memory_mutex = PTHREAD_MUTEX_INITIALIZER;
 pthread_mutex_t used_pmem_memory_mutex = PTHREAD_MUTEX_INITIALIZER;
+
+#define THRESHOLD_STEP_NORMAL 0.05
+#define THRESHOLD_STEP_AGGRESIVE (THRESHOLD_STEP_NORMAL*5)
+#define THRESHOLD_UP(val, step)  ((size_t)ceil((1+(step))*val))
+#define THRESHOLD_DOWN(val, step) ((size_t)floor((1-(step))*val))
+
+static inline size_t absDiff(size_t a, size_t b) {
+    return a > b ? (a - b) : (b - a);
+}
+
+static void adjustPmemThresholdCycle(void) {
+    if (use_ratio) {
+        if (zmalloc_counter++ == 1000) {
+            zmalloc_counter = 0;
+            /* Difference between target ratio and current ratio in last checkpoint*/
+            static double ratio_diff_checkpoint;
+            /* PMEM and DRAM utilization in last checkpoint*/
+            static size_t total_memory_checkpoint;
+            size_t pmem_memory = zmalloc_used_pmem_memory();
+            size_t dram_memory = zmalloc_used_memory();
+            size_t total_memory_current = pmem_memory + dram_memory;
+            // do not modify threshold when change in memory usage is too small
+            if (absDiff(total_memory_checkpoint, total_memory_current) > 100) {
+                double current_ratio = (double)pmem_memory/dram_memory;
+                double current_ratio_diff = fabs(current_ratio - pmem_dram_ratio);
+                if (current_ratio_diff > 0.02) {
+                    //current ratio is worse than moment before
+                    double variableMultipler = current_ratio/pmem_dram_ratio;
+                    double step = (current_ratio_diff < ratio_diff_checkpoint) ?
+                                  variableMultipler*THRESHOLD_STEP_NORMAL : variableMultipler*THRESHOLD_STEP_AGGRESIVE;
+                    size_t threshold = zmalloc_get_threshold();
+                    if (pmem_dram_ratio < current_ratio) {
+                        size_t higher_threshold = THRESHOLD_UP(threshold,step);
+                        if (higher_threshold <= dynamic_max_threshold)
+                            zmalloc_set_threshold(higher_threshold);
+                    } else {
+                        size_t lower_threshold = THRESHOLD_DOWN(threshold,step);
+                        if (lower_threshold >= dynamic_min_threshold)
+                            zmalloc_set_threshold(lower_threshold);
+                    }
+                }
+                ratio_diff_checkpoint = current_ratio_diff;
+            }
+            total_memory_checkpoint = total_memory_current;
+        }
+    }
+}
 
 static void zmalloc_default_oom(size_t size) {
     fprintf(stderr, "zmalloc: Out of memory trying to allocate %zu bytes\n",
@@ -262,6 +316,7 @@ static void *zrealloc_pmem(void *ptr, size_t size) {
 #endif
 
 void *zmalloc(size_t size) {
+    adjustPmemThresholdCycle();
     return (size < pmem_threshold) ? zmalloc_dram(size) : zmalloc_pmem(size);
 }
 
@@ -280,6 +335,7 @@ void *zcalloc_dram(size_t size) {
 }
 
 void *zcalloc(size_t size) {
+    adjustPmemThresholdCycle();
     return (size < pmem_threshold) ? zcalloc_dram(size) : zcalloc_pmem(size);
 }
 
@@ -397,6 +453,16 @@ size_t zmalloc_get_threshold(void) {
 
 void zmalloc_set_threshold(size_t threshold) {
     pmem_threshold = threshold;
+}
+
+void zmalloc_set_ratio(double ratio) {
+    use_ratio = 1;
+    pmem_dram_ratio = ratio;
+}
+
+void zmalloc_set_threshold_range(unsigned int min, unsigned int max) {
+    dynamic_min_threshold = min;
+    dynamic_max_threshold = max;
 }
 
 /* Get the RSS information in an OS-specific way.

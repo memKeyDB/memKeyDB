@@ -992,9 +992,6 @@ robj *rdbLoadObject(int rdbtype, rio *rdb) {
 
         /* Load every single element of the list */
         while(len--) {
-            if (len%100 == 0) {
-                adjustPmemThresholdCycle();
-            }
             if ((ele = rdbLoadEncodedStringObject(rdb)) == NULL) return NULL;
             dec = getDecodedObject(ele);
             size_t len = sdslen(dec->ptr);
@@ -1020,9 +1017,7 @@ robj *rdbLoadObject(int rdbtype, rio *rdb) {
         /* Load every single element of the list/set */
         for (i = 0; i < len; i++) {
             long long llval;
-            if (len%100 == 0) {
-                adjustPmemThresholdCycle();
-            }
+
             if ((ele = rdbLoadEncodedStringObject(rdb)) == NULL) return NULL;
             ele = tryObjectEncoding(ele);
 
@@ -1059,9 +1054,6 @@ robj *rdbLoadObject(int rdbtype, rio *rdb) {
             robj *ele;
             double score;
             zskiplistNode *znode;
-            if (zsetlen%100 == 0) {
-                adjustPmemThresholdCycle();
-            }
 
             if ((ele = rdbLoadEncodedStringObject(rdb)) == NULL) return NULL;
             ele = tryObjectEncoding(ele);
@@ -1098,11 +1090,6 @@ robj *rdbLoadObject(int rdbtype, rio *rdb) {
             robj *field, *value;
 
             len--;
-
-            if (len%100 == 0) {
-                adjustPmemThresholdCycle();
-            }
-
             /* Load raw strings */
             field = rdbLoadStringObject(rdb);
             if (field == NULL) return NULL;
@@ -1157,9 +1144,6 @@ robj *rdbLoadObject(int rdbtype, rio *rdb) {
                             server.list_compress_depth);
 
         while (len--) {
-            if (len%100 == 0) {
-                adjustPmemThresholdCycle();
-            }
             unsigned char *zl = rdbGenericLoadStringObject(rdb,RDB_LOAD_PLAIN);
             if (zl == NULL) return NULL;
             quicklistAppendZiplist(o->ptr, zl);
@@ -1298,7 +1282,6 @@ int rdbLoad(char *filename) {
     long long expiretime, now = mstime();
     FILE *fp;
     rio rdb;
-    int i=0;
 
     if ((fp = fopen(filename,"r")) == NULL) return C_ERR;
 
@@ -1325,11 +1308,7 @@ int rdbLoad(char *filename) {
     while(1) {
         robj *key, *val;
         expiretime = -1;
-        i++;
-        if (i%1000 == 0) {
-            i=0;
-            adjustPmemThresholdCycle();
-        }
+
         /* Read type. */
         if ((type = rdbLoadType(&rdb)) == -1) goto eoferr;
 
