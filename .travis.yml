@@ -1,4 +1,5 @@
 language: c
+cache: ccache
 dist: bionic
 compiler:
   - gcc
