@@ -156,6 +156,13 @@ start_server {tags {"introspection"}} {
             aof_rewrite_cpulist
             bgsave_cpulist
             set-proc-title
+            dram-pmem-ratio
+            memory-alloc-policy
+            initial-dynamic-threshold
+            dynamic-threshold-min
+            dynamic-threshold-max
+            memory-ratio-check-period
+            hashtable-on-dram
         }
 
         if {!$::tls} {
