@@ -5,56 +5,39 @@ on: [push, pull_request]
 jobs:
 
   test-ubuntu-latest:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-20.04
+    name: Allocator ${{ matrix.allocator }} | Compiler ${{ matrix.env.cc }}
+    strategy:
+      matrix:
+        env:
+          - { cc: gcc, cxx: g++}
+          - { cc: clang, cxx: clang++}
+        allocator: [jemalloc, libc, memkind]
     steps:
-    - uses: actions/checkout@v2
-    - name: make
-      # Fail build if there are warnings
-      # build with TLS just for compilation coverage
-      run: make REDIS_CFLAGS='-Werror' BUILD_TLS=yes
-    - name: test
+
+    - name: Checkout repository and submodules
+      uses: actions/checkout@v2
+      with:
+        submodules: recursive
+
+    - name: Install memkind build dependencies
       run: |
-        sudo apt-get install tcl8.6
-        ./runtest --verbose
-    - name: module api test
-      run: ./runtest-moduleapi --verbose
+          if [ "${{ matrix.allocator }}" == memkind ]; then
+            sudo apt install libnuma-dev libdaxctl-dev
+          fi
 
-  build-ubuntu-old:
-    runs-on: ubuntu-16.04
-    steps:
-    - uses: actions/checkout@v2
-    - name: make
-      run: make REDIS_CFLAGS='-Werror'
+    - name: Install test dependencies
+      run: sudo apt install tcl
 
-  build-macos-latest:
-    runs-on: macos-latest
-    steps:
-    - uses: actions/checkout@v2
-    - name: make
-      run: make REDIS_CFLAGS='-Werror'
+    - name: Build memKeydB
+      run: make gcov MALLOC=${{ matrix.allocator }}
 
-  build-32bit:
-    runs-on: ubuntu-latest
-    steps:
-    - uses: actions/checkout@v2
-    - name: make
+    - name: Run Tests
       run: |
-        sudo apt-get update && sudo apt-get install libc6-dev-i386
-        make REDIS_CFLAGS='-Werror' 32bit
+          if [ "${{ matrix.allocator }}" == memkind ]; then
+            MEMKIND_DAX_KMEM_NODES=0 ./runtest --pmem-ratio --clients 1
+          fi
+          ./runtest --clients 1
 
-  build-libc-malloc:
-    runs-on: ubuntu-latest
-    steps:
-    - uses: actions/checkout@v2
-    - name: make
-      run: make REDIS_CFLAGS='-Werror' MALLOC=libc
-
-  build-centos7-jemalloc:
-    runs-on: ubuntu-latest
-    container: centos:7
-    steps:
-    - uses: actions/checkout@v2
-    - name: make
-      run: |
-        yum -y install gcc make
-        make REDIS_CFLAGS='-Werror'
+    - name: Upload coverage to Codecov
+      uses: codecov/codecov-action@v1
