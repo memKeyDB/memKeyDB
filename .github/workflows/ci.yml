@@ -6,45 +6,44 @@ jobs:
 
   test-ubuntu-latest:
     runs-on: ubuntu-latest
+    name: Allocator ${{ matrix.allocator }} | Compiler ${{ matrix.env.cc }}
+    strategy:
+      matrix:
+        env:
+          - { cc: gcc, cxx: g++}
+          - { cc: clang, cxx: clang++}
+        allocator: [jemalloc, libc, memkind]
     steps:
-    - uses: actions/checkout@v2
-    - name: make
-      # build with TLS just for compilatoin coverage
-      run: make BUILD_TLS=yes
-    - name: test
+
+    - name: Checkout repository and submodules
+      uses: actions/checkout@v2
+      with:
+        submodules: recursive
+
+    - name: Install basic dependencies
       run: |
-        sudo apt-get install tcl8.5
-        ./runtest --verbose
-    - name: module api test
-      run: ./runtest-moduleapi --verbose
+          if [ "${{ matrix.allocator }}" == memkind ]; then
+            sudo apt install libjson-c-dev libkeyutils-dev libkmod-dev libnuma-dev libudev-dev uuid-dev
+          fi
+          sudo apt install tcl8.5 
 
-  build-ubuntu-old:
-    runs-on: ubuntu-16.04
-    steps:
-    - uses: actions/checkout@v2
-    - name: make
-      run: make
-
-  build-macos-latest:
-    runs-on: macos-latest
-    steps:
-    - uses: actions/checkout@v2
-    - name: make
-      run: make
-
-  build-32bit:
-    runs-on: ubuntu-latest
-    steps:
-    - uses: actions/checkout@v2
-    - name: make
+    - name: Install ndctl
       run: |
-        sudo apt-get update && sudo apt-get install libc6-dev-i386
-        make 32bit
+          if [ "${{ matrix.allocator }}" == memkind ]; then
+            wget https://github.com/pmem/ndctl/archive/v68.tar.gz
+            tar -xzvf v68.tar.gz
+            pushd ndctl-68 && ./autogen.sh && ./configure --disable-docs --prefix=/usr && make && sudo make install && popd
+          fi
 
-  build-libc-malloc:
-    runs-on: ubuntu-latest
-    steps:
-    - uses: actions/checkout@v2
-    - name: make
-      run: make MALLOC=libc
+    - name: Build memKeydB
+      run: make gcov MALLOC=${{ matrix.allocator }}
 
+    - name: Run Tests
+      run: |
+          if [ "${{ matrix.allocator }}" == memkind ]; then
+            MEMKIND_DAX_KMEM_NODES=0 ./runtest --pmem-ratio --clients 1
+          fi
+          ./runtest --clients 1
+
+    - name: Upload coverage to Codecov
+      uses: codecov/codecov-action@v1
