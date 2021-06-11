@@ -86,11 +86,16 @@ void zlibc_free(void *ptr) {
 #define dallocx(ptr,flags) je_dallocx(ptr,flags)
 #elif defined(USE_MEMKIND)
 #include <errno.h>
-#define malloc(size) memkind_malloc(MEMKIND_DEFAULT,size)
-#define calloc(count,size) memkind_calloc(MEMKIND_DEFAULT,count,size)
-#define realloc_dram(ptr,size) memkind_realloc(MEMKIND_DEFAULT,ptr,size)
+extern void* jemk_malloc(size_t size);
+extern void* jemk_calloc(size_t count, size_t size);
+extern void* jemk_realloc(void* ptr, size_t size);
+extern void jemk_free(void* ptr);
+
+#define malloc(size) jemk_malloc(size);
+#define calloc(count,size) jemk_calloc(count,size)
+#define realloc_dram(ptr,size) jemk_realloc(ptr,size)
 #define realloc_pmem(ptr,size) memkind_realloc(MEMKIND_DAX_KMEM,ptr,size)
-#define free_dram(ptr) memkind_free(MEMKIND_DEFAULT,ptr)
+#define free_dram(ptr) jemk_free(ptr)
 #define free_pmem(ptr) memkind_free(MEMKIND_DAX_KMEM,ptr)
 #endif
 

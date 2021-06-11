@@ -59,7 +59,8 @@
 #define ZMALLOC_LIB "memkind"
 #include <memkind.h>
 #define HAVE_MALLOC_SIZE 1
-#define zmalloc_size(p) memkind_malloc_usable_size(NULL, p)
+extern size_t jemk_malloc_usable_size(void* ptr);
+#define zmalloc_size(p) jemk_malloc_usable_size(p)
 
 #elif defined(__APPLE__)
 #include <malloc/malloc.h>
