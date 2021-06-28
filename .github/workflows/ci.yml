@@ -23,10 +23,7 @@ jobs:
     - name: Install memkind build dependencies
       run: |
           if [ "${{ matrix.allocator }}" == memkind ]; then
-            sudo apt install libjson-c-dev libkeyutils-dev libkmod-dev libnuma-dev libudev-dev uuid-dev
-            wget https://github.com/pmem/ndctl/archive/v68.tar.gz
-            tar -xzvf v68.tar.gz
-            pushd ndctl-68 && ./autogen.sh && ./configure --disable-docs --prefix=/usr && make && sudo make install && popd
+            sudo apt install libnuma-dev libdaxctl-dev
           fi
 
     - name: Install test dependencies
