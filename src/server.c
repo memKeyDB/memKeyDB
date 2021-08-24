@@ -3357,11 +3357,11 @@ void initServer(void) {
     scriptingInit(1);
     slowlogInit();
     latencyMonitorInit();
-    
+
     /* Initialize ACL default password if it exists */
     ACLUpdateDefaultUserPassword(server.requirepass);
 
-    pmemThresholdInit();
+    pmemInit();
     dictSetAllocPolicy(server.hashtable_on_dram);
 }
 

@@ -91,12 +91,14 @@ extern void* jemk_calloc(size_t count, size_t size);
 extern void* jemk_realloc(void* ptr, size_t size);
 extern void jemk_free(void* ptr);
 
+static struct memkind* pmem_kind;
+
 #define malloc(size) jemk_malloc(size);
 #define calloc(count,size) jemk_calloc(count,size)
 #define realloc_dram(ptr,size) jemk_realloc(ptr,size)
-#define realloc_pmem(ptr,size) memkind_realloc(MEMKIND_DAX_KMEM,ptr,size)
+#define realloc_pmem(ptr,size) memkind_realloc(pmem_kind,ptr,size)
 #define free_dram(ptr) jemk_free(ptr)
-#define free_pmem(ptr) memkind_free(MEMKIND_DAX_KMEM,ptr)
+#define free_pmem(ptr) memkind_free(pmem_kind,ptr)
 #endif
 
 #define update_zmalloc_dram_stat_alloc(__n) atomicIncr(used_dram_memory,(__n))
@@ -158,6 +160,14 @@ static void *zrealloc_pmem(void *ptr, size_t size) {
 
 size_t zmalloc_used_memory(void) {
     return zmalloc_used_dram_memory();
+}
+
+void zmalloc_set_pmem_variant_single_mode(void) {
+    // Unsupported
+}
+
+void zmalloc_set_pmem_variant_multiple_mode(void) {
+    // Unsupported
 }
 
 static void *ztrymalloc_usable_pmem(size_t size, size_t *usable) {
@@ -233,7 +243,7 @@ static void zfree_usable_pmem(void *ptr, size_t *usable) {
 static int zmalloc_is_pmem(void * ptr) {
     if (memory_variant == MEMORY_ONLY_DRAM) return DRAM_LOCATION;
     struct memkind *temp_kind = memkind_detect_kind(ptr);
-    return (temp_kind == MEMKIND_DAX_KMEM) ? PMEM_LOCATION : DRAM_LOCATION;
+    return (temp_kind == MEMKIND_DAX_KMEM_ALL) ? PMEM_LOCATION : DRAM_LOCATION;
 }
 
 size_t zmalloc_used_memory(void) {
@@ -260,7 +270,7 @@ static void zfree_pmem(void *ptr) {
 
 static void *ztrymalloc_usable_pmem(size_t size, size_t *usable) {
     ASSERT_NO_SIZE_OVERFLOW(size);
-    void *ptr = memkind_malloc(MEMKIND_DAX_KMEM, size+PREFIX_SIZE);
+    void *ptr = memkind_malloc(pmem_kind, size+PREFIX_SIZE);
 
     if (!ptr) return NULL;
 #ifdef HAVE_MALLOC_SIZE
@@ -295,7 +305,7 @@ static void *zmalloc_usable_pmem(size_t size, size_t *usable) {
 
 static void *ztrycalloc_usable_pmem(size_t size, size_t *usable) {
     ASSERT_NO_SIZE_OVERFLOW(size);
-    void *ptr = memkind_calloc(MEMKIND_DAX_KMEM, 1, size+PREFIX_SIZE);
+    void *ptr = memkind_calloc(pmem_kind, 1, size+PREFIX_SIZE);
     if (ptr == NULL) return NULL;
 
 #ifdef HAVE_MALLOC_SIZE
@@ -408,6 +418,14 @@ static void zfree_usable_pmem(void *ptr, size_t *usable) {
     update_zmalloc_pmem_stat_free(oldsize+PREFIX_SIZE);
     free_pmem(realptr);
 #endif
+}
+
+void zmalloc_set_pmem_variant_single_mode(void) {
+    pmem_kind = MEMKIND_DAX_KMEM;
+}
+
+void zmalloc_set_pmem_variant_multiple_mode(void) {
+    pmem_kind = MEMKIND_DAX_KMEM_ALL;
 }
 
 #endif
