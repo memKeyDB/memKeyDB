@@ -2947,7 +2947,7 @@ void initServer(void) {
     scriptingInit(1);
     slowlogInit();
     latencyMonitorInit();
-    pmemThresholdInit();
+    pmemInit();
     dictSetAllocPolicy(server.hashtable_on_dram);
 }
 
