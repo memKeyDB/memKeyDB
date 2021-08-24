@@ -41,8 +41,8 @@ static inline size_t absDiff(size_t a, size_t b) {
     return a > b ? (a - b) : (b - a);
 }
 
-/* Initialize the pmem threshold. */
-void pmemThresholdInit(void) {
+/* Initialize the PMEM threshold and variant. */
+void pmemInit(void) {
     switch(server.memory_alloc_policy) {
         case MEM_POLICY_ONLY_DRAM:
             zmalloc_set_threshold(SIZE_MAX);
@@ -58,6 +58,17 @@ void pmemThresholdInit(void) {
         case MEM_POLICY_RATIO:
             zmalloc_set_threshold(server.initial_dynamic_threshold);
             zmalloc_set_pmem_mode();
+            break;
+        default:
+            serverAssert(NULL);
+    }
+
+    switch(server.pmem_variant) {
+        case PMEM_VARIANT_SINGLE:
+            zmalloc_set_pmem_variant_single_mode();
+            break;
+        case PMEM_VARIANT_MULTIPLE:
+            zmalloc_set_pmem_variant_multiple_mode();
             break;
         default:
             serverAssert(NULL);

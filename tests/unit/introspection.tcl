@@ -158,6 +158,7 @@ start_server {tags {"introspection"}} {
             set-proc-title
             dram-pmem-ratio
             memory-alloc-policy
+            pmem-variant
             initial-dynamic-threshold
             dynamic-threshold-min
             dynamic-threshold-max
