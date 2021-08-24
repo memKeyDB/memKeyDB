@@ -100,6 +100,7 @@ start_server {tags {"introspection"}} {
             bgsave_cpulist
             dram-pmem-ratio
             memory-alloc-policy
+            pmem-variant
             initial-dynamic-threshold
             dynamic-threshold-min
             dynamic-threshold-max

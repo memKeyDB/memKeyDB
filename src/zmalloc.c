@@ -83,12 +83,14 @@ extern void* jemk_calloc(size_t count, size_t size);
 extern void* jemk_realloc(void* ptr, size_t size);
 extern void jemk_free(void* ptr);
 
+static struct memkind* pmem_kind;
+
 #define malloc(size) jemk_malloc(size);
 #define calloc(count,size) jemk_calloc(count,size)
 #define realloc_dram(ptr,size) jemk_realloc(ptr,size)
-#define realloc_pmem(ptr,size) memkind_realloc(MEMKIND_DAX_KMEM,ptr,size)
+#define realloc_pmem(ptr,size) memkind_realloc(pmem_kind,ptr,size)
 #define free_dram(ptr) jemk_free(ptr)
-#define free_pmem(ptr) memkind_free(MEMKIND_DAX_KMEM,ptr)
+#define free_pmem(ptr) memkind_free(pmem_kind,ptr)
 #endif
 
 #ifndef USE_MEMKIND
@@ -132,6 +134,14 @@ static void *zrealloc_pmem(void *ptr, size_t size) {
 size_t zmalloc_used_memory(void) {
     return zmalloc_used_dram_memory();
 }
+
+void zmalloc_set_pmem_variant_single_mode(void) {
+    // unsupported
+}
+
+void zmalloc_set_pmem_variant_multiple_mode(void) {
+}
+
 #endif
 
 #define update_zmalloc_dram_stat_alloc(__n) do { \
@@ -221,7 +231,7 @@ static void zfree_pmem(void *ptr) {
 }
 
 static void *zmalloc_pmem(size_t size) {
-    void *ptr = memkind_malloc(MEMKIND_DAX_KMEM, size+PREFIX_SIZE);
+    void *ptr = memkind_malloc(pmem_kind, size+PREFIX_SIZE);
     if (!ptr && errno==ENOMEM) zmalloc_oom_handler(size);
 #ifdef HAVE_MALLOC_SIZE
     update_zmalloc_pmem_stat_alloc(zmalloc_size(ptr));
@@ -234,7 +244,7 @@ static void *zmalloc_pmem(size_t size) {
 }
 
 static void *zcalloc_pmem(size_t size) {
-    void *ptr = memkind_calloc(MEMKIND_DAX_KMEM, 1, size+PREFIX_SIZE);
+    void *ptr = memkind_calloc(pmem_kind, 1, size+PREFIX_SIZE);
 
     if (!ptr && errno==ENOMEM) zmalloc_oom_handler(size);
 #ifdef HAVE_MALLOC_SIZE
@@ -279,7 +289,15 @@ static void *zrealloc_pmem(void *ptr, size_t size) {
     return (char*)newptr+PREFIX_SIZE;
 #endif
 }
-#endif
+
+void zmalloc_set_pmem_variant_single_mode(void) {
+    pmem_kind = MEMKIND_DAX_KMEM;
+}
+
+void zmalloc_set_pmem_variant_multiple_mode(void) {
+    pmem_kind = MEMKIND_DAX_KMEM_ALL;
+}
+#endif // USE_MEMKIND
 
 void *zmalloc(size_t size) {
     return (size < pmem_threshold) ? zmalloc_dram(size) : zmalloc_pmem(size);
