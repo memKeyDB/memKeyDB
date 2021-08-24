@@ -64,6 +64,23 @@ void pmemThresholdInit(void) {
     }
 }
 
+/* Initialize KMEM DAX variant */
+void pmemKmemDaxVariantInit(void) {
+    switch(server.kmem_dax_variant) {
+        case KMEM_DAX_DEFAULT_VARIANT:
+            zmalloc_kmem_dax_default_mode();
+            break;
+        case KMEM_DAX_ALL_VARIANT:
+            zmalloc_kmem_dax_all_mode();
+            break;
+        case KMEM_DAX_PREFERRED_VARIANT:
+            zmalloc_kmem_dax_preferred_mode();
+            break;
+        default:
+            serverAssert(NULL);
+    }
+}
+
 void adjustPmemThresholdCycle(void) {
     if (server.memory_alloc_policy != MEM_POLICY_RATIO) {
         return;

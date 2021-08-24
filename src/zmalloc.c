@@ -89,9 +89,21 @@ extern void jemk_free(void* ptr);
 #define realloc_pmem(ptr,size) memkind_realloc(MEMKIND_DAX_KMEM,ptr,size)
 #define free_dram(ptr) jemk_free(ptr)
 #define free_pmem(ptr) memkind_free(MEMKIND_DAX_KMEM,ptr)
+
+static void* kmem_dax_memory_variant = 0;
 #endif
 
 #ifndef USE_MEMKIND
+
+void zmalloc_kmem_dax_default_mode(void) {
+}
+
+void zmalloc_kmem_dax_all_mode(void) {
+}
+
+void zmalloc_kmem_dax_preferred_mode(void) {
+}
+
 static void zmalloc_pmem_not_available(void) {
     fprintf(stderr, "zmalloc: PMEM function is available only for memkind allocator\n");
     fflush(stderr);
@@ -192,6 +204,19 @@ void *zmalloc_dram(size_t size) {
 }
 
 #ifdef USE_MEMKIND
+
+void zmalloc_kmem_dax_default_mode(void) {
+    kmem_dax_memory_variant = MEMKIND_DAX_KMEM;
+}
+
+void zmalloc_kmem_dax_all_mode(void) {
+    kmem_dax_memory_variant = MEMKIND_DAX_KMEM_ALL;
+}
+
+void zmalloc_kmem_dax_preferred_mode(void) {
+    kmem_dax_memory_variant = MEMKIND_DAX_KMEM_PREFERRED;
+}
+
 static int zmalloc_is_pmem(void * ptr) {
     if (memory_variant == MEMORY_ONLY_DRAM) return DRAM_LOCATION;
     struct memkind *temp_kind = memkind_detect_kind(ptr);

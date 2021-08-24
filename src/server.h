@@ -484,6 +484,11 @@ typedef long long ustime_t; /* microsecond time type. */
 #define MEM_POLICY_RATIO     2          /* use DRAM and PMEM - ratio variant*/
 #define MEM_POLICY_THRESHOLD 3          /* use DRAM and PMEM - threshold variant*/
 
+/* KMEM DAX variants */
+#define KMEM_DAX_DEFAULT_VARIANT   0    /* default */
+#define KMEM_DAX_ALL_VARIANT       1    /* all */
+#define KMEM_DAX_PREFERRED_VARIANT 2    /* preferred */
+
 struct RedisModule;
 struct RedisModuleIO;
 struct RedisModuleDigest;
@@ -1349,6 +1354,7 @@ struct redisServer {
     double target_pmem_dram_ratio;            /* Target PMEM/DRAM ratio */
     int ratio_check_period;                   /* Period of checking ratio in Cron*/
     int hashtable_on_dram;                    /* Keep hashtable always on DRAM */
+    int kmem_dax_variant;                     /* KMEM DAX variant (default, all or preferred) */
     /* Blocked clients */
     unsigned int blocked_clients;   /* # of clients executing a blocking cmd.*/
     unsigned int blocked_clients_by_type[BLOCKED_NUM];
@@ -2219,6 +2225,7 @@ void dictSdsDestructor(void *privdata, void *val);
 /* pmem.c - Handling Persistent Memory */
 void pmemThresholdInit(void);
 void adjustPmemThresholdCycle(void);
+void pmemKmemDaxVariantInit(void);
 
 /* Git SHA1 */
 char *redisGitSHA1(void);

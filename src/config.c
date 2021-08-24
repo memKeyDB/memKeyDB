@@ -99,6 +99,13 @@ configEnum memory_alloc_policy_enum[] = {
     {NULL, 0}
 };
 
+configEnum kmem_dax_variant_enum[] = {
+    {"default", KMEM_DAX_DEFAULT_VARIANT},
+    {"all", KMEM_DAX_ALL_VARIANT},
+    {"preferred", KMEM_DAX_PREFERRED_VARIANT},
+    {NULL, 0}
+};
+
 configEnum repl_diskless_load_enum[] = {
     {"disabled", REPL_DISKLESS_LOAD_DISABLED},
     {"on-empty-db", REPL_DISKLESS_LOAD_WHEN_DB_EMPTY},
@@ -2196,6 +2203,7 @@ standardConfig configs[] = {
     createEnumConfig("maxmemory-policy", NULL, MODIFIABLE_CONFIG, maxmemory_policy_enum, server.maxmemory_policy, MAXMEMORY_NO_EVICTION, NULL, NULL),
     createEnumConfig("appendfsync", NULL, MODIFIABLE_CONFIG, aof_fsync_enum, server.aof_fsync, AOF_FSYNC_EVERYSEC, NULL, NULL),
     createEnumConfig("memory-alloc-policy", NULL, IMMUTABLE_CONFIG, memory_alloc_policy_enum, server.memory_alloc_policy, MEM_POLICY_ONLY_DRAM, NULL, NULL),
+    createEnumConfig("kmem-dax-variant", NULL, IMMUTABLE_CONFIG, kmem_dax_variant_enum, server.kmem_dax_variant, KMEM_DAX_DEFAULT_VARIANT, NULL, NULL),
 
     /* Integer configs */
     createIntConfig("databases", NULL, IMMUTABLE_CONFIG, 1, INT_MAX, server.dbnum, 16, INTEGER_CONFIG, NULL, NULL),
