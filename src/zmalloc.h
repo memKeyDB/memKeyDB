@@ -58,6 +58,7 @@
 #elif defined(USE_MEMKIND)
 #define ZMALLOC_LIB "memkind"
 #include <memkind.h>
+#include <memkind/internal/memkind_dax_kmem.h>
 #define HAVE_MALLOC_SIZE 1
 extern size_t jemk_malloc_usable_size(void* ptr);
 #define zmalloc_size(p) jemk_malloc_usable_size(p)
