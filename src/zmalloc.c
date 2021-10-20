@@ -89,6 +89,10 @@ extern void jemk_free(void* ptr);
 #define realloc_pmem(ptr,size) memkind_realloc(MEMKIND_DAX_KMEM,ptr,size)
 #define free_dram(ptr) jemk_free(ptr)
 #define free_pmem(ptr) memkind_free(MEMKIND_DAX_KMEM,ptr)
+
+/* Use Memkind to check if there are any DAX KMEM NUMA nodes in the system */
+int memkind_dax_kmem_all_get_mbind_nodemask(struct memkind *kind,
+    unsigned long *nodemask, unsigned long maxnode);
 #endif
 
 #ifndef USE_MEMKIND
@@ -192,6 +196,29 @@ void *zmalloc_dram(size_t size) {
 }
 
 #ifdef USE_MEMKIND
+static void zmalloc_pmem_oom_handler(size_t size) {
+    unsigned long mask = 0;
+    int err = memkind_dax_kmem_all_get_mbind_nodemask(NULL, &mask, 256);
+    if (err || (mask == 0)) {
+        fprintf(stderr,"\n---------------------------------------------------------------------------------------\n");
+        fprintf(stderr,"!!! It looks like there are no PMEM NUMA nodes or automatic recognition of these nodes\n");
+        fprintf(stderr,"!!! is not working.\n");
+        fprintf(stderr,"!!! Please run \"numactl -H\" to see if it reports any PMEM NUMA nodes (nodes without\n");
+        fprintf(stderr,"!!! CPUs). If so, please provide a list of these nodes in the MEMKIND_DAX_KMEM_NODES\n");
+        fprintf(stderr,"!!! environment variable (see deps/memkind/man/memkind.3 for a description). If not,\n");
+        fprintf(stderr,"!!! please contact your system administrator for proper KMEM_DAX setup.\n");
+        fprintf(stderr,"\n---------------------------------------------------------------------------------------\n");
+        fflush(stderr);
+
+        /* setting alloc threshold to SIZE_MAX effectively disables
+        allocations to PMEM  */
+        zmalloc_set_threshold(SIZE_MAX);
+    }
+
+    /* call default OOM handler here for gracefull shutdown */
+    zmalloc_oom_handler(size);
+}
+
 static int zmalloc_is_pmem(void * ptr) {
     if (memory_variant == MEMORY_ONLY_DRAM) return DRAM_LOCATION;
     struct memkind *temp_kind = memkind_detect_kind(ptr);
@@ -222,7 +249,7 @@ static void zfree_pmem(void *ptr) {
 
 static void *zmalloc_pmem(size_t size) {
     void *ptr = memkind_malloc(MEMKIND_DAX_KMEM, size+PREFIX_SIZE);
-    if (!ptr && errno==ENOMEM) zmalloc_oom_handler(size);
+    if (!ptr) zmalloc_pmem_oom_handler(size);
 #ifdef HAVE_MALLOC_SIZE
     update_zmalloc_pmem_stat_alloc(zmalloc_size(ptr));
     return ptr;
@@ -236,7 +263,7 @@ static void *zmalloc_pmem(size_t size) {
 static void *zcalloc_pmem(size_t size) {
     void *ptr = memkind_calloc(MEMKIND_DAX_KMEM, 1, size+PREFIX_SIZE);
 
-    if (!ptr && errno==ENOMEM) zmalloc_oom_handler(size);
+    if (!ptr) zmalloc_pmem_oom_handler(size);
 #ifdef HAVE_MALLOC_SIZE
     update_zmalloc_pmem_stat_alloc(zmalloc_size(ptr));
     return ptr;
@@ -262,7 +289,7 @@ static void *zrealloc_pmem(void *ptr, size_t size) {
 #ifdef HAVE_MALLOC_SIZE
     oldsize = zmalloc_size(ptr);
     newptr = realloc_pmem(ptr,size);
-    if (!newptr) zmalloc_oom_handler(size);
+    if (!newptr) zmalloc_pmem_oom_handler(size);
 
     update_zmalloc_pmem_stat_free(oldsize);
     update_zmalloc_pmem_stat_alloc(zmalloc_size(newptr));
@@ -271,7 +298,7 @@ static void *zrealloc_pmem(void *ptr, size_t size) {
     realptr = (char*)ptr-PREFIX_SIZE;
     oldsize = *((size_t*)realptr);
     newptr = realloc_pmem(realptr,size+PREFIX_SIZE);
-    if (!newptr) zmalloc_oom_handler(size);
+    if (!newptr) zmalloc_pmem_oom_handler(size);
 
     *((size_t*)newptr) = size;
     update_zmalloc_pmem_stat_free(oldsize+PREFIX_SIZE);
